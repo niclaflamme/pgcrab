@@ -35,9 +35,11 @@ pub enum ParseError {
     Sync(sync::SyncError),
     Terminate(terminate::TerminateError),
 
-    // Unknown frame tag
+    // :shrug: errors
+    NoAuthExpectation,
     UnknownFrameTag(u8),
-    UnparsableSpecialFrame,
+    Unparsable,
+    UnexpectedAuthOutsideAuthState,
 }
 
 impl From<bind::BindError> for ParseError {
