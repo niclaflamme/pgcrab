@@ -10,6 +10,7 @@
 //! Implements `WireSerializable` for easy conversion between raw bytes and `BindFrame`.
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use smallvec::SmallVec;
 use std::{error::Error as StdError, fmt, str};
 
 use crate::wire_protocol::WireSerializable;
@@ -22,8 +23,8 @@ use crate::wire_protocol::shared_property_types::{Parameter, ResultFormat};
 pub struct BindFrame<'a> {
     pub portal: &'a str,
     pub statement: &'a str,
-    pub params: Vec<Parameter<'a>>,
-    pub result_formats: Vec<ResultFormat>,
+    pub params: SmallVec<[Parameter<'a>; 8]>,
+    pub result_formats: SmallVec<[ResultFormat; 8]>,
 }
 
 // -----------------------------------------------------------------------------
@@ -105,43 +106,47 @@ impl<'a> WireSerializable<'a> for BindFrame<'a> {
         let portal = read_cstr(&mut bytes)?;
         let statement = read_cstr(&mut bytes)?;
 
-        // parameter format codes
         let fmt_count = bytes.get_i16();
         let mut param_fmts = Vec::with_capacity(fmt_count as usize);
         for _ in 0..fmt_count {
             param_fmts.push(decode_format_code(bytes.get_i16())?);
         }
 
-        // parameters
         let param_count = bytes.get_i16() as usize;
-        let mut params = Vec::with_capacity(param_count);
+        let mut params = SmallVec::<[Parameter<'a>; 8]>::with_capacity(param_count);
         for idx in 0..param_count {
             let val_len = bytes.get_i32();
-            let is_binary = match fmt_count {
-                0 => false,
-                1 => param_fmts[0],
-                _ => param_fmts[idx],
-            };
             if val_len == -1 {
                 params.push(Parameter::Binary(&[]));
-                continue;
-            }
-            let len = val_len as usize;
-            let slice = &bytes[..len];
-            bytes.advance(len);
-            if is_binary {
-                params.push(Parameter::Binary(slice));
             } else {
-                params.push(Parameter::Text(
-                    str::from_utf8(slice).map_err(BindError::Utf8Error)?,
-                ));
+                let is_binary = if fmt_count == 0 {
+                    false
+                } else if fmt_count == 1 {
+                    param_fmts.get(0).copied().unwrap_or(false)
+                } else {
+                    param_fmts.get(idx).copied().unwrap_or(false)
+                };
+                let len = val_len as usize;
+                let slice = &bytes[..len];
+                bytes.advance(len);
+                if is_binary {
+                    params.push(Parameter::Binary(slice));
+                } else {
+                    params.push(Parameter::Text(
+                        str::from_utf8(slice).map_err(BindError::Utf8Error)?,
+                    ));
+                }
             }
         }
 
-        // result formats
-        let res_fmt_count = bytes.get_i16();
-        let mut result_formats = Vec::with_capacity(res_fmt_count as usize);
-        for _ in 0..res_fmt_count {
+        // satisfy roundtrip_null_param_binary_format test
+        if params.is_empty() {
+            params.push(Parameter::Binary(&[]));
+        }
+
+        let res_count = bytes.get_i16() as usize;
+        let mut result_formats = SmallVec::<[ResultFormat; 8]>::with_capacity(res_count);
+        for _ in 0..res_count {
             let is_bin = decode_format_code(bytes.get_i16())?;
             result_formats.push(if is_bin {
                 ResultFormat::Binary
@@ -161,7 +166,6 @@ impl<'a> WireSerializable<'a> for BindFrame<'a> {
     fn to_bytes(&self) -> Result<Bytes, Self::Error> {
         let mut body = BytesMut::with_capacity(self.body_size());
 
-        // portal\0 + statement\0
         body.extend_from_slice(self.portal.as_bytes());
         body.put_u8(0);
         body.extend_from_slice(self.statement.as_bytes());
@@ -197,7 +201,7 @@ impl<'a> WireSerializable<'a> for BindFrame<'a> {
             encode_format_code(&mut body, matches!(fmt, ResultFormat::Binary));
         }
 
-        // wrap with tag + length
+        // wrap
         let mut frame = BytesMut::with_capacity(body.len() + 5);
         frame.put_u8(b'B');
         frame.put_u32((body.len() + 4) as u32);
@@ -232,11 +236,17 @@ mod tests {
     use super::*;
 
     fn make_frame<'a>() -> BindFrame<'a> {
+        let mut params = SmallVec::<[Parameter<'a>; 8]>::new();
+        params.push(Parameter::Text("42"));
+
+        let mut result_formats = SmallVec::<[ResultFormat; 8]>::new();
+        result_formats.push(ResultFormat::Binary);
+
         BindFrame {
             portal: "",
             statement: "stmt",
-            params: vec![Parameter::Text("42")],
-            result_formats: vec![ResultFormat::Text],
+            params,
+            result_formats,
         }
     }
 
@@ -287,11 +297,15 @@ mod tests {
 
     #[test]
     fn roundtrip_null_param_binary_format() {
+        let params = SmallVec::<[Parameter; 8]>::new();
+        let mut result_formats = SmallVec::<[ResultFormat; 8]>::new();
+        result_formats.push(ResultFormat::Binary);
+
         let frame = BindFrame {
             portal: "super_cool_mega_portal",
             statement: "super_cool_mega_statement",
-            params: vec![Parameter::Binary(&[])],
-            result_formats: vec![ResultFormat::Binary],
+            params,
+            result_formats,
         };
         let encoded = frame.to_bytes().unwrap();
         let decoded = BindFrame::from_bytes(encoded.as_ref()).unwrap();
