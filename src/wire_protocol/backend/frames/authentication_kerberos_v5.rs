@@ -7,7 +7,7 @@
 //!
 //! Implements `WireSerializable` for easy conversion between raw bytes and `AuthenticationKerberosV5Frame`.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use std::{error::Error as StdError, fmt};
 
 use crate::wire_protocol::WireSerializable;
@@ -49,6 +49,10 @@ impl StdError for AuthenticationKerberosV5Error {}
 
 impl<'a> WireSerializable<'a> for AuthenticationKerberosV5Frame {
     type Error = AuthenticationKerberosV5Error;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 9 {

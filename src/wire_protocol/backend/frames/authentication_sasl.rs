@@ -10,8 +10,8 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::{error::Error as StdError, fmt, str};
 
-use crate::wire_protocol::shared_property_types::{SaslMechanism, SaslMechanismError};
 use crate::wire_protocol::WireSerializable;
+use crate::wire_protocol::types::{SaslMechanism, SaslMechanismError};
 
 // -----------------------------------------------------------------------------
 // ----- ProtocolMessage -------------------------------------------------------
@@ -80,6 +80,10 @@ fn read_cstr<'a>(buf: &mut &'a [u8]) -> Result<&'a str, AuthenticationSaslError>
 
 impl<'a> WireSerializable<'a> for AuthenticationSaslFrame {
     type Error = AuthenticationSaslError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 10 {

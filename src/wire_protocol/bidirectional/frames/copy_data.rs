@@ -47,6 +47,10 @@ impl StdError for CopyDataError {}
 impl<'a> WireSerializable<'a> for CopyDataFrame<'a> {
     type Error = CopyDataError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(CopyDataError::UnexpectedLength(bytes.len() as u32));

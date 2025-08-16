@@ -7,7 +7,7 @@
 //!
 //! Implements `WireSerializable` for easy conversion between raw bytes and `ParseCompleteFrame`.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use std::{error::Error as StdError, fmt};
 
 use crate::wire_protocol::WireSerializable;
@@ -43,6 +43,10 @@ impl StdError for ParseCompleteError {}
 
 impl<'a> WireSerializable<'a> for ParseCompleteFrame {
     type Error = ParseCompleteError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {

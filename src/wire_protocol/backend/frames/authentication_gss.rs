@@ -7,10 +7,15 @@
 //!
 //! Implements `WireSerializable` for easy conversion between raw bytes and `AuthenticationGssFrame`.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use std::{error::Error as StdError, fmt};
 
 use crate::wire_protocol::WireSerializable;
+
+// -----------------------------------------------------------------------------
+// ----- Constants -------------------------------------------------------------
+
+const MESSAGE_IN_BYTES: &[u8] = b"R\x00\x00\x00\x08\x00\x00\x00\x07";
 
 // -----------------------------------------------------------------------------
 // ----- ProtocolMessage -------------------------------------------------------
@@ -46,6 +51,11 @@ impl StdError for AuthenticationGssError {}
 impl<'a> WireSerializable<'a> for AuthenticationGssFrame {
     type Error = AuthenticationGssError;
 
+    /// Authentication frames are overridden by PgCrab and never sent by the server.
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(AuthenticationGssError::UnexpectedLength(bytes.len() as u32));
@@ -74,7 +84,7 @@ impl<'a> WireSerializable<'a> for AuthenticationGssFrame {
     }
 
     fn to_bytes(&self) -> Result<Bytes, Self::Error> {
-        Ok(Bytes::from_static(b"R\x00\x00\x00\x08\x00\x00\x00\x07"))
+        Ok(Bytes::from_static(MESSAGE_IN_BYTES))
     }
 
     fn body_size(&self) -> usize {

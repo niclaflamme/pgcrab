@@ -74,6 +74,10 @@ fn read_cstr<'a>(buf: &mut &'a [u8]) -> Result<&'a str, NegotiateProtocolVersion
 impl<'a> WireSerializable<'a> for NegotiateProtocolVersionFrame<'a> {
     type Error = NegotiateProtocolVersionError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes_full: &'a [u8]) -> Result<Self, Self::Error> {
         // need at least tag+len
         if bytes_full.len() < 5 {

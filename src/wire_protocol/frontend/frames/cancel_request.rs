@@ -49,6 +49,10 @@ impl StdError for CancelRequestError {}
 impl<'a> WireSerializable<'a> for CancelRequestFrame {
     type Error = CancelRequestError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() != 16 {
             return Err(CancelRequestError::UnexpectedLength(bytes.len()));

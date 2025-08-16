@@ -72,6 +72,10 @@ fn read_cstr<'a>(buf: &mut &'a [u8]) -> Result<&'a str, ParseError> {
 impl<'a> WireSerializable<'a> for ParseFrame<'a> {
     type Error = ParseError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.remaining() < 5 {
             return Err(ParseError::UnexpectedEof);

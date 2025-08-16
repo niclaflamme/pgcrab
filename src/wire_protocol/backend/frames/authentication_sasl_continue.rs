@@ -54,6 +54,10 @@ impl StdError for AuthenticationSaslContinueError {}
 impl<'a> WireSerializable<'a> for AuthenticationSaslContinueFrame<'a> {
     type Error = AuthenticationSaslContinueError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 9 {
             return Err(AuthenticationSaslContinueError::UnexpectedLength(

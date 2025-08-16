@@ -46,6 +46,10 @@ impl StdError for SslRequestError {}
 impl<'a> WireSerializable<'a> for SslRequestFrame {
     type Error = SslRequestError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() != 8 {
             return Err(SslRequestError::UnexpectedLength(bytes.len()));

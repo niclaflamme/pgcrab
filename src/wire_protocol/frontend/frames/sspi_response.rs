@@ -48,6 +48,10 @@ impl StdError for SspiResponseError {}
 impl<'a> WireSerializable<'a> for SspiResponseFrame<'a> {
     type Error = SspiResponseError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(SspiResponseError::UnexpectedLength(bytes.len() as u32));

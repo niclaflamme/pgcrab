@@ -11,8 +11,8 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use std::{error::Error as StdError, fmt, str};
 
-use crate::wire_protocol::shared_property_types::ResultFormat;
 use crate::wire_protocol::WireSerializable;
+use crate::wire_protocol::types::ResultFormat;
 
 // -----------------------------------------------------------------------------
 // ----- ProtocolMessage -------------------------------------------------------
@@ -104,6 +104,10 @@ fn encode_format_code(buf: &mut BytesMut, format: ResultFormat) {
 
 impl<'a> WireSerializable<'a> for RowDescriptionFrame<'a> {
     type Error = RowDescriptionError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.remaining() < 5 {

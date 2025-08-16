@@ -71,6 +71,10 @@ fn read_cstr<'a>(bytes: &'a [u8]) -> Result<(&'a str, usize), QueryError> {
 impl<'a> WireSerializable<'a> for QueryFrame<'a> {
     type Error = QueryError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(QueryError::UnexpectedLength(bytes.len() as u32));

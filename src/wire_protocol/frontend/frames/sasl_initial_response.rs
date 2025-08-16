@@ -11,10 +11,8 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use std::{error::Error as StdError, fmt, str};
 
-use crate::wire_protocol::shared_property_types::sasl_mechanism::{
-    SaslMechanism, SaslMechanismError,
-};
 use crate::wire_protocol::WireSerializable;
+use crate::wire_protocol::types::sasl_mechanism::{SaslMechanism, SaslMechanismError};
 
 // -----------------------------------------------------------------------------
 // ----- ProtocolMessage -------------------------------------------------------
@@ -83,6 +81,10 @@ fn read_cstr<'a>(buf: &mut &'a [u8]) -> Result<&'a str, SaslInitialResponseError
 
 impl<'a> WireSerializable<'a> for SaslInitialResponseFrame<'a> {
     type Error = SaslInitialResponseError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.remaining() < 5 {

@@ -25,7 +25,7 @@ impl ConnectionBuffer {
         Self {
             primary: BytesMut::with_capacity(SLAB_SIZE),
             secondary: BytesMut::with_capacity(SLAB_SIZE),
-            frame_open: false,
+            frame_open: true,
         }
     }
 }

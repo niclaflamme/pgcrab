@@ -48,6 +48,10 @@ impl StdError for GssResponseError {}
 impl<'a> WireSerializable<'a> for GssResponseFrame<'a> {
     type Error = GssResponseError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(GssResponseError::UnexpectedLength(bytes.len() as u32));

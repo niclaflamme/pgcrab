@@ -70,6 +70,10 @@ fn read_cstr<'a>(bytes: &'a [u8]) -> Result<(&'a str, usize), CopyFailError> {
 impl<'a> WireSerializable<'a> for CopyFailFrame<'a> {
     type Error = CopyFailError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(CopyFailError::UnexpectedLength(bytes.len() as u32));

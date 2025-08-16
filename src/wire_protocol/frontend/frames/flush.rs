@@ -9,7 +9,7 @@
 //! Implements `WireSerializable` for conversion between raw bytes and
 //! `FlushFrame`.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use std::{error::Error as StdError, fmt};
 
 use crate::wire_protocol::WireSerializable;
@@ -45,6 +45,10 @@ impl StdError for FlushError {}
 
 impl<'a> WireSerializable<'a> for FlushFrame {
     type Error = FlushError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {

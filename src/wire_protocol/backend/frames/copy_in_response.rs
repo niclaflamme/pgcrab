@@ -10,8 +10,8 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::{error::Error as StdError, fmt};
 
-use crate::wire_protocol::shared_property_types::ResultFormat;
 use crate::wire_protocol::WireSerializable;
+use crate::wire_protocol::types::ResultFormat;
 
 // -----------------------------------------------------------------------------
 // ----- ProtocolMessage -------------------------------------------------------
@@ -57,6 +57,10 @@ impl StdError for CopyInResponseError {}
 
 impl<'a> WireSerializable<'a> for CopyInResponseFrame {
     type Error = CopyInResponseError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         // need at least tag (1) + len (4)

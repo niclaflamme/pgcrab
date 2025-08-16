@@ -57,6 +57,10 @@ impl StdError for ExecuteError {}
 impl<'a> WireSerializable<'a> for ExecuteFrame<'a> {
     type Error = ExecuteError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         // Need at least tag + len
         if bytes.len() < 5 {

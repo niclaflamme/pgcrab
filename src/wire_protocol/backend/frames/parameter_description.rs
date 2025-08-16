@@ -50,6 +50,10 @@ impl StdError for ParameterDescriptionError {}
 impl<'a> WireSerializable<'a> for ParameterDescriptionFrame {
     type Error = ParameterDescriptionError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.remaining() < 7 {
             return Err(ParameterDescriptionError::UnexpectedEof);

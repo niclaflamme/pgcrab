@@ -52,6 +52,10 @@ impl StdError for AuthenticationMd5PasswordError {}
 impl<'a> WireSerializable<'a> for AuthenticationMd5PasswordFrame {
     type Error = AuthenticationMd5PasswordError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 13 {
             return Err(AuthenticationMd5PasswordError::UnexpectedLength(

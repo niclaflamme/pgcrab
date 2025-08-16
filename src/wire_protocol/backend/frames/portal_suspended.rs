@@ -7,8 +7,7 @@
 //!
 //! Implements `WireSerializable` for easy conversion between raw bytes and `PortalSuspendedFrame`.
 
-use bytes::Bytes;
-
+use bytes::{Bytes, BytesMut};
 use std::{error::Error as StdError, fmt};
 
 use crate::wire_protocol::WireSerializable;
@@ -47,6 +46,10 @@ impl StdError for PortalSuspendedError {}
 
 impl<'a> WireSerializable<'a> for PortalSuspendedFrame {
     type Error = PortalSuspendedError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {

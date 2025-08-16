@@ -48,6 +48,10 @@ impl StdError for SaslResponseError {}
 impl<'a> WireSerializable<'a> for SaslResponseFrame<'a> {
     type Error = SaslResponseError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(SaslResponseError::UnexpectedLength(bytes.len() as u32));

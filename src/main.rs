@@ -73,7 +73,7 @@ async fn run_forever() -> std::io::Result<()> {
                 tokio::spawn(async move {
                     let conn = FrontendConnection::new(stream);
 
-                    if let Err(e) = conn.run().await {
+                    if let Err(e) = conn.serve().await {
                         error!("client {peer} error: {e}");
                     }
                 });

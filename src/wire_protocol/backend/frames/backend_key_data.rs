@@ -47,6 +47,10 @@ impl StdError for BackendKeyDataError {}
 impl<'a> WireSerializable<'a> for BackendKeyDataFrame {
     type Error = BackendKeyDataError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 13 {
             return Err(BackendKeyDataError::UnexpectedLength(bytes.len() as u32));

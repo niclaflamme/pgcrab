@@ -237,6 +237,10 @@ impl<'a> CommandTag<'a> {
 impl<'a> WireSerializable<'a> for CommandCompleteFrame<'a> {
     type Error = CommandCompleteError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(CommandCompleteError::UnexpectedLength(bytes.len() as u32));

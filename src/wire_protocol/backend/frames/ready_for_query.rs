@@ -58,6 +58,10 @@ impl StdError for ReadyForQueryError {}
 impl<'a> WireSerializable<'a> for ReadyForQueryFrame {
     type Error = ReadyForQueryError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 6 {
             return Err(ReadyForQueryError::UnexpectedLength(bytes.len() as u32));

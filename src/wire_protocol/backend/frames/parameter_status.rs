@@ -71,6 +71,10 @@ fn read_cstr<'a>(bytes: &mut &'a [u8]) -> Result<&'a str, ParameterStatusError> 
 impl<'a> WireSerializable<'a> for ParameterStatusFrame<'a> {
     type Error = ParameterStatusError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 7 {
             return Err(ParameterStatusError::UnexpectedLength(bytes.len() as u32));

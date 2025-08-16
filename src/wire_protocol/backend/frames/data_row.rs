@@ -59,6 +59,10 @@ impl StdError for DataRowError {}
 impl<'a> WireSerializable<'a> for DataRowFrame<'a> {
     type Error = DataRowError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.remaining() < 7 {
             return Err(DataRowError::UnexpectedEof);

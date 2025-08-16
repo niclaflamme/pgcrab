@@ -76,6 +76,10 @@ fn read_cstr<'a>(bytes: &'a [u8]) -> Result<(&'a str, usize), PasswordMessageErr
 impl<'a> WireSerializable<'a> for PasswordMessageFrame<'a> {
     type Error = PasswordMessageError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 5 {
             return Err(PasswordMessageError::UnexpectedLength(bytes.len() as u32));

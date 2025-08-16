@@ -141,6 +141,10 @@ impl StdError for ErrorResponseError {
 impl<'a> WireSerializable<'a> for ErrorResponseFrame<'a> {
     type Error = ErrorResponseError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         // Need at least tag + length
         if bytes.len() < 5 {

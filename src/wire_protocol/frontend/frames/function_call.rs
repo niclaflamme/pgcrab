@@ -13,7 +13,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::{error::Error as StdError, fmt, str};
 
 use crate::wire_protocol::WireSerializable;
-use crate::wire_protocol::shared_property_types::{Parameter, ResultFormat};
+use crate::wire_protocol::types::{Parameter, ResultFormat};
 
 // -----------------------------------------------------------------------------
 // ----- ProtocolMessage -------------------------------------------------------
@@ -80,6 +80,10 @@ fn decode_format_code(code: i16) -> Result<bool, FunctionCallError> {
 
 impl<'a> WireSerializable<'a> for FunctionCallFrame<'a> {
     type Error = FunctionCallError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.remaining() < 5 {

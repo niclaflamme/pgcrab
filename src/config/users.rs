@@ -120,37 +120,37 @@ impl UsersConfig {
         }
 
         let mut by_key = HashMap::with_capacity(doc.users.len());
-        for mut u in doc.users.drain(..) {
-            normalize_defaults(&mut u);
-            validate(&u)?;
+        for mut user in doc.users.drain(..) {
+            normalize_defaults(&mut user);
+            validate(&user)?;
 
-            let server_username = u
+            let server_username = user
                 .server_username
                 .clone()
-                .unwrap_or_else(|| u.username.clone());
-            let server_password = u
+                .unwrap_or_else(|| user.username.clone());
+            let server_password = user
                 .server_password
                 .clone()
-                .unwrap_or_else(|| u.password.clone());
+                .unwrap_or_else(|| user.password.clone());
 
             let record = UserRecord {
-                client_username: u.username.clone(),
-                database_name: u.database_name.clone(),
+                client_username: user.username.clone(),
+                database_name: user.database_name.clone(),
 
-                client_password: SecretString::new(u.password.into_boxed_str()),
+                client_password: SecretString::new(user.password.into_boxed_str()),
                 server_username,
                 server_password: SecretString::new(server_password.into_boxed_str()),
 
-                pool_size: u.pool_size,
-                pooler_mode: u.pooler_mode,
-                statement_timeout: u.statement_timeout,
+                pool_size: user.pool_size,
+                pooler_mode: user.pooler_mode,
+                statement_timeout: user.statement_timeout,
             };
 
             let key = UserKey::new(&record.client_username, &record.database_name);
             if by_key.insert(key, record).is_some() {
                 return Err(UsersError::DuplicateUser {
-                    username: u.username,
-                    database_name: u.database_name,
+                    username: user.username,
+                    database_name: user.database_name,
                 });
             }
         }

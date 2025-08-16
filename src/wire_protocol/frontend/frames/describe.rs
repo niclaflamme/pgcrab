@@ -58,6 +58,10 @@ impl StdError for DescribeError {
 impl<'a> WireSerializable<'a> for DescribeFrame<'a> {
     type Error = DescribeError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 7 {
             return Err(DescribeError::UnexpectedLength(bytes.len() as u32));

@@ -50,6 +50,10 @@ impl StdError for FunctionCallResponseError {}
 impl<'a> WireSerializable<'a> for FunctionCallResponseFrame<'a> {
     type Error = FunctionCallResponseError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < 9 {
             return Err(FunctionCallResponseError::UnexpectedLength(

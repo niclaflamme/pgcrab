@@ -22,6 +22,11 @@ pub struct StartupFrame<'a> {
     pub parameters: Vec<(&'a str, &'a str)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartupPeek {
+    pub total_length: usize, // includes the 4-byte length itself
+}
+
 // -----------------------------------------------------------------------------
 // ----- Error -----------------------------------------------------------------
 
@@ -69,6 +74,10 @@ fn read_cstr<'a>(buf: &mut &'a [u8]) -> Result<&'a str, StartupError> {
 
 impl<'a> WireSerializable<'a> for StartupFrame<'a> {
     type Error = StartupError;
+
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
 
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         let initial_remaining = bytes.remaining();
@@ -206,7 +215,7 @@ mod tests {
     fn extra_data_after_terminator() {
         let mut bytes = make_frame().to_bytes().unwrap().to_vec();
         bytes.push(1); // extra byte
-                       // Adjust length to match new size
+        // Adjust length to match new size
         let corrupt_len = bytes.len() as i32;
         bytes[0..4].copy_from_slice(&corrupt_len.to_be_bytes());
         let err = StartupFrame::from_bytes(&bytes).unwrap_err();
@@ -223,6 +232,40 @@ mod tests {
         matches!(err, StartupError::Utf8Error(_));
     }
 }
+
+// -----------------------------------------------------------------------------
+// ----- Constants / Kinds -----------------------------------------------------
+
+impl<'a> StartupFrame<'a> {
+    /// Non-destructive: if a full frame is present, return its length and kind.
+    pub fn peek(buf: &BytesMut) -> Option<usize> {
+        if buf.len() < 8 {
+            return None;
+        }
+
+        let total_length = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+        if total_length < 8 || buf.len() < total_length {
+            return None;
+        }
+
+        Some(total_length)
+    }
+}
+
+// /// Destructive: if a full frame is present, drain it from `buf`.
+// pub fn take(buf: &mut BytesMut) -> Option<StartupEnvelope> {
+//     let some = peek(buf)?;
+//     let raw = buf.split_to(some.total_length).freeze();
+//     Some(StartupEnvelope {
+//         kind: some.kind,
+//         raw,
+//     })
+// }
+
+// /// Helper to keep your current `Vec<u8>` interface, if needed.
+// pub fn take_raw(buf: &mut BytesMut) -> Option<Vec<u8>> {
+//     take(buf).map(|e| e.raw.to_vec())
+// }
 
 // -----------------------------------------------------------------------------
 // -----------------------------------------------------------------------------

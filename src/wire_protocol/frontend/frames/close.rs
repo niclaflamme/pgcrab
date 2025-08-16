@@ -85,6 +85,10 @@ fn read_cstr<'a>(buf: &mut &'a [u8]) -> Result<&'a str, CloseError> {
 impl<'a> WireSerializable<'a> for CloseFrame<'a> {
     type Error = CloseError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.remaining() < 6 {
             return Err(CloseError::UnexpectedEof);

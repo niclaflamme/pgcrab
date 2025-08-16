@@ -156,6 +156,10 @@ fn read_cstr<'a>(buf: &mut &'a [u8]) -> Result<&'a str, NoticeResponseError> {
 impl<'a> WireSerializable<'a> for NoticeResponseFrame<'a> {
     type Error = NoticeResponseError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.remaining() < 5 {
             return Err(NoticeResponseError::UnexpectedLength(bytes.len() as u32));

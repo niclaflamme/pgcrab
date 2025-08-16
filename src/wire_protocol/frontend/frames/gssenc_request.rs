@@ -47,6 +47,10 @@ impl StdError for GssencRequestError {}
 impl<'a> WireSerializable<'a> for GssencRequestFrame {
     type Error = GssencRequestError;
 
+    fn peek(_buf: &BytesMut) -> Option<usize> {
+        None
+    }
+
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() != 8 {
             return Err(GssencRequestError::UnexpectedLength(bytes.len()));
