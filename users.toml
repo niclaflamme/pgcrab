@@ -1,0 +1,4 @@
+[[users]]
+database_name = "pgcrab"
+username = "pgcrab"
+password = "pgcrab"

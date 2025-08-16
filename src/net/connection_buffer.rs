@@ -12,15 +12,15 @@ use bytes::BytesMut;
 const SLAB_SIZE: usize = 4 * 1024;
 
 // -----------------------------------------------------------------------------
-// ----- ConnBuff --------------------------------------------------------------
+// ----- ConnectionBuffer ------------------------------------------------------
 
-pub struct ConnBuff {
+pub struct ConnectionBuffer {
     primary: BytesMut,
     secondary: BytesMut,
     frame_open: bool,
 }
 
-impl ConnBuff {
+impl ConnectionBuffer {
     pub fn new() -> Self {
         Self {
             primary: BytesMut::with_capacity(SLAB_SIZE),
@@ -31,9 +31,9 @@ impl ConnBuff {
 }
 
 // -----------------------------------------------------------------------------
-// ----- ConnBuff: Public Methods ----------------------------------------------
+// ----- ConnectionBuffer: Public Methods --------------------------------------
 
-impl ConnBuff {
+impl ConnectionBuffer {
     #[inline]
     pub fn begin_frame(&mut self) {
         debug_assert!(!self.frame_open, "frame already open");
@@ -100,14 +100,14 @@ impl ConnBuff {
 }
 
 // -----------------------------------------------------------------------------
-// ----- ConnBuff: Private Methods ---------------------------------------------
+// ----- ConnectionBuffer: Private Methods -------------------------------------
 
-impl ConnBuff {}
+impl ConnectionBuffer {}
 
 // -----------------------------------------------------------------------------
-// ----- ConnBuff: Test Helpers ------------------------------------------------
+// ----- ConnectionBuffer: Test Helpers ----------------------------------------
 
-impl ConnBuff {
+impl ConnectionBuffer {
     #[cfg(test)]
     pub fn primary_len(&self) -> usize {
         self.primary.len()
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn push_into_primary_only() {
-        let mut buf = ConnBuff::new();
+        let mut buf = ConnectionBuffer::new();
         let n = SLAB_SIZE / 2;
         let written = buf.push(&bytes(n));
         assert_eq!(written, n);
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn push_fills_primary_then_secondary() {
-        let mut buf = ConnBuff::new();
+        let mut buf = ConnectionBuffer::new();
         let written = buf.push(&bytes(SLAB_SIZE + 100));
         assert_eq!(written, SLAB_SIZE + 100);
         assert_eq!(buf.primary_len(), SLAB_SIZE);
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn stops_when_both_full() {
-        let mut buf = ConnBuff::new();
+        let mut buf = ConnectionBuffer::new();
         buf.push(&bytes(SLAB_SIZE * 2)); // fill both
         assert!(buf.needs_flush());
 
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn overflow_write_truncates() {
-        let mut buf = ConnBuff::new();
+        let mut buf = ConnectionBuffer::new();
         let attempt = SLAB_SIZE * 2 + 123; // 123 over capacity
         let written = buf.push(&bytes(attempt));
         assert_eq!(written, SLAB_SIZE * 2);
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn take_full_and_rebalance() {
-        let mut buf = ConnBuff::new();
+        let mut buf = ConnectionBuffer::new();
         buf.push(&bytes(SLAB_SIZE * 2)); // both full
         let slab = buf.take_full().expect("full slab");
         assert_eq!(slab.len(), SLAB_SIZE);
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn partial_flush_does_not_rebalance() {
-        let mut buf = ConnBuff::new();
+        let mut buf = ConnectionBuffer::new();
         buf.push(&bytes(SLAB_SIZE + 50)); // spill into secondary
         let _ = buf.take_full().unwrap(); // take primary only
         buf.rebalance(); // secondary promoted

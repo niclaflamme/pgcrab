@@ -6,25 +6,25 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::net::ConnBuff;
+use crate::net::ConnectionBuffer;
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
 
-const READ_CAPACITY: usize = 4 * 1024;
+const SCRATCH_SIZE: usize = 8 * 1024;
 
 // -----------------------------------------------------------------------------
 // ----- FrontendConnection ----------------------------------------------------
 
 pub struct FrontendConnection {
-    state: ConnState,
+    state: ConnectionState,
 
     reader: tokio::net::tcp::OwnedReadHalf,
     writer: tokio::net::tcp::OwnedWriteHalf,
-    inbound: BytesMut,
-    outbound: ConnBuff,
 
-    #[allow(dead_code)]
+    inbound: BytesMut,
+    outbound: ConnectionBuffer,
+
     rx: mpsc::UnboundedReceiver<Frame>,
     #[allow(dead_code)]
     tx: mpsc::UnboundedSender<Frame>,
@@ -36,11 +36,11 @@ impl FrontendConnection {
         let (tx, rx) = mpsc::unbounded_channel();
 
         Self {
-            state: ConnState::Startup,
+            state: ConnectionState::Startup,
             reader,
             writer,
-            inbound: BytesMut::with_capacity(READ_CAPACITY),
-            outbound: ConnBuff::new(),
+            inbound: BytesMut::with_capacity(SCRATCH_SIZE),
+            outbound: ConnectionBuffer::new(),
             rx,
             tx,
         }
@@ -55,7 +55,7 @@ type Frame = Vec<u8>;
 type Response = Vec<u8>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnState {
+pub enum ConnectionState {
     Startup,        // not yet started handshake (unauthenticated)
     AuthInProgress, // in the auth conversation
     Ready,          // authenticated and ready for SQL
@@ -66,7 +66,7 @@ pub enum ConnState {
 
 impl FrontendConnection {
     pub async fn run(mut self) -> std::io::Result<()> {
-        let mut scratch = [0u8; READ_CAPACITY];
+        let mut scratch = [0u8; SCRATCH_SIZE];
 
         loop {
             select! {
@@ -77,11 +77,12 @@ impl FrontendConnection {
                     if n == 0 { break; } // client closed
 
                     self.inbound.extend_from_slice(&scratch[..n]);
+
                     // Drain all parseable messages from buffer (pipelining support)
                     while let Some(frame) = match self.state {
-                        ConnState::Startup        => Self::try_parse_startup(&mut self.inbound),
-                        ConnState::AuthInProgress => Self::try_parse_auth(&mut self.inbound),
-                        ConnState::Ready          => Self::try_parse_sql(&mut self.inbound),
+                        ConnectionState::Startup        => Self::try_parse_startup(&mut self.inbound),
+                        ConnectionState::AuthInProgress => Self::try_parse_auth(&mut self.inbound),
+                        ConnectionState::Ready          => Self::try_parse_sql(&mut self.inbound),
                     } {
                         self.process_frame(frame);
                     }
@@ -95,6 +96,10 @@ impl FrontendConnection {
                     }
                 }
 
+                // --- Receive from backend ---
+                Some(resp) = self.rx.recv() => {
+                    self.outbound.push(&resp);
+                }
             }
         }
 
@@ -108,19 +113,19 @@ impl FrontendConnection {
 impl FrontendConnection {
     fn process_frame(&mut self, frame: Frame) {
         match self.state {
-            ConnState::Startup => {
+            ConnectionState::Startup => {
                 // TODO: real startup protocol parsing here
                 // Advance to AuthInProgress if handshake OK
                 self.outbound.push(b"Authentication request".as_ref());
-                self.state = ConnState::AuthInProgress;
+                self.state = ConnectionState::AuthInProgress;
             }
-            ConnState::AuthInProgress => {
+            ConnectionState::AuthInProgress => {
                 // TODO: real auth protocol here
                 // Advance to Ready on success
                 self.outbound.push(b"AuthenticationOk".as_ref());
-                self.state = ConnState::Ready;
+                self.state = ConnectionState::Ready;
             }
-            ConnState::Ready => {
+            ConnectionState::Ready => {
                 // TODO: parse and handle SQL protocol
                 let resp = Self::handle_sql(frame);
                 self.outbound.push(&resp);
