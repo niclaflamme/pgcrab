@@ -64,17 +64,18 @@ impl UsersConfig {
     pub fn handle() -> &'static UsersConfig {
         USERS.get().expect("Users not initialized")
     }
+
+    pub fn snapshot() -> Vec<UserRecord> {
+        let handle = Self::handle();
+        let guard = handle.inner.read();
+        guard.by_key.values().cloned().collect()
+    }
 }
 
 // -----------------------------------------------------------------------------
 // ----- UsersConfig: Public ---------------------------------------------------
 
 impl UsersConfig {
-    pub fn snapshot(&self) -> Vec<UserRecord> {
-        let guard = self.inner.read();
-        guard.by_key.values().cloned().collect()
-    }
-
     pub fn authenticate(
         &self,
         database_name: &str,

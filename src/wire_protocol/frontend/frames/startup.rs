@@ -19,7 +19,9 @@ use crate::wire_protocol::WireSerializable;
 #[derive(Debug)]
 pub struct StartupFrame<'a> {
     pub version: i32,
-    pub parameters: Vec<(&'a str, &'a str)>,
+    pub database: &'a str,
+    pub user: &'a str,
+    pub other_parameters: Vec<(&'a str, &'a str)>,
 }
 
 // -----------------------------------------------------------------------------
@@ -30,6 +32,7 @@ pub enum StartupError {
     Utf8Error(str::Utf8Error),
     UnexpectedEof,
     InvalidLength,
+    MissingParam(&'static str),
 }
 
 impl fmt::Display for StartupError {
@@ -38,6 +41,7 @@ impl fmt::Display for StartupError {
             StartupError::Utf8Error(e) => write!(f, "UTF-8 error: {e}"),
             StartupError::UnexpectedEof => write!(f, "unexpected EOF"),
             StartupError::InvalidLength => write!(f, "invalid length"),
+            StartupError::MissingParam(p) => write!(f, "missing required parameter: {p}"),
         }
     }
 }
@@ -75,51 +79,77 @@ impl<'a> WireSerializable<'a> for StartupFrame<'a> {
     }
 
     fn from_bytes(mut bytes: &'a [u8]) -> Result<Self, Self::Error> {
-        let initial_remaining = bytes.remaining();
-        if initial_remaining < 8 {
+        let remaining = bytes.remaining();
+        if remaining < 8 {
             return Err(StartupError::UnexpectedEof);
         }
 
         let msg_len = bytes.get_i32() as usize;
-        if msg_len != initial_remaining {
+        if msg_len != remaining {
             return Err(StartupError::InvalidLength);
         }
 
         let version = bytes.get_i32();
 
-        let mut parameters = Vec::new();
+        let mut other_parameters: Vec<(&'a str, &'a str)> = Vec::new();
+        let mut found_user: Option<&'a str> = None;
+        let mut found_database: Option<&'a str> = None;
+
         loop {
             let key = read_cstr(&mut bytes)?;
             if key.is_empty() {
                 break;
             }
             let value = read_cstr(&mut bytes)?;
-            parameters.push((key, value));
+            match key {
+                "user" if found_user.is_none() => found_user = Some(value),
+                "database" if found_database.is_none() => found_database = Some(value),
+                _ => {}
+            }
+            other_parameters.push((key, value));
         }
 
         if bytes.has_remaining() {
             return Err(StartupError::InvalidLength);
         }
 
+        let user = found_user.ok_or(StartupError::MissingParam("user"))?;
+        let database = found_database.ok_or(StartupError::MissingParam("database"))?;
+
         Ok(StartupFrame {
             version,
-            parameters,
+            user,
+            database,
+            other_parameters,
         })
     }
 
     fn to_bytes(&self) -> Result<Bytes, Self::Error> {
-        let mut body = BytesMut::with_capacity(self.body_size());
-
+        let mut body = BytesMut::new();
         body.put_i32(self.version);
 
-        for &(key, value) in &self.parameters {
-            body.extend_from_slice(key.as_bytes());
+        // Canonicalize: write user/database first.
+        body.extend_from_slice(b"user");
+        body.put_u8(0);
+        body.extend_from_slice(self.user.as_bytes());
+        body.put_u8(0);
+
+        body.extend_from_slice(b"database");
+        body.put_u8(0);
+        body.extend_from_slice(self.database.as_bytes());
+        body.put_u8(0);
+
+        for &(k, v) in &self.other_parameters {
+            if (k == "user" && v == self.user) || (k == "database" && v == self.database) {
+                continue; // skip duplicates of canonical fields
+            }
+            body.extend_from_slice(k.as_bytes());
             body.put_u8(0);
-            body.extend_from_slice(value.as_bytes());
+            body.extend_from_slice(v.as_bytes());
             body.put_u8(0);
         }
 
-        body.put_u8(0);
+        body.put_u8(0); // terminator
 
         let mut frame = BytesMut::with_capacity(body.len() + 4);
         frame.put_i32((body.len() + 4) as i32);
@@ -130,7 +160,7 @@ impl<'a> WireSerializable<'a> for StartupFrame<'a> {
 
     fn body_size(&self) -> usize {
         4 + self
-            .parameters
+            .other_parameters
             .iter()
             .map(|(k, v)| k.len() + 1 + v.len() + 1)
             .sum::<usize>()
@@ -148,14 +178,9 @@ mod tests {
     fn make_frame() -> StartupFrame<'static> {
         StartupFrame {
             version: 196608, // 3.0
-            parameters: vec![("user", "postgres"), ("database", "mydb")],
-        }
-    }
-
-    fn make_empty_params_frame() -> StartupFrame<'static> {
-        StartupFrame {
-            version: 196608,
-            parameters: vec![],
+            user: "postgres",
+            database: "mydb",
+            other_parameters: vec![],
         }
     }
 
@@ -165,16 +190,7 @@ mod tests {
         let encoded = frame.to_bytes().unwrap();
         let decoded = StartupFrame::from_bytes(encoded.as_ref()).unwrap();
         assert_eq!(decoded.version, frame.version);
-        assert_eq!(decoded.parameters, frame.parameters);
-    }
-
-    #[test]
-    fn roundtrip_empty_params() {
-        let frame = make_empty_params_frame();
-        let encoded = frame.to_bytes().unwrap();
-        let decoded = StartupFrame::from_bytes(encoded.as_ref()).unwrap();
-        assert_eq!(decoded.version, frame.version);
-        assert_eq!(decoded.parameters, frame.parameters);
+        assert_eq!(decoded.other_parameters, frame.other_parameters);
     }
 
     #[test]
@@ -227,24 +243,6 @@ mod tests {
         matches!(err, StartupError::Utf8Error(_));
     }
 }
-
-// -----------------------------------------------------------------------------
-// ----- Constants / Kinds -----------------------------------------------------
-
-// /// Destructive: if a full frame is present, drain it from `buf`.
-// pub fn take(buf: &mut BytesMut) -> Option<StartupEnvelope> {
-//     let some = peek(buf)?;
-//     let raw = buf.split_to(some.total_length).freeze();
-//     Some(StartupEnvelope {
-//         kind: some.kind,
-//         raw,
-//     })
-// }
-
-// /// Helper to keep your current `Vec<u8>` interface, if needed.
-// pub fn take_raw(buf: &mut BytesMut) -> Option<Vec<u8>> {
-//     take(buf).map(|e| e.raw.to_vec())
-// }
 
 // -----------------------------------------------------------------------------
 // -----------------------------------------------------------------------------

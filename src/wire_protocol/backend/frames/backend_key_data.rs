@@ -8,6 +8,7 @@
 //! Implements `WireSerializable` for easy conversion between raw bytes and `BackendKeyDataFrame`.
 
 use bytes::{BufMut, Bytes, BytesMut};
+use rand::Rng;
 use std::{error::Error as StdError, fmt};
 
 use crate::wire_protocol::WireSerializable;
@@ -19,6 +20,34 @@ use crate::wire_protocol::WireSerializable;
 pub struct BackendKeyDataFrame {
     pub process_id: i32,
     pub secret_key: i32,
+}
+
+// -----------------------------------------------------------------------------
+// ----- ProtocolMessage: Static -----------------------------------------------
+
+impl BackendKeyDataFrame {
+    pub fn random() -> Self {
+        let mut rng = rand::rng();
+
+        BackendKeyDataFrame {
+            process_id: rng.random(),
+            secret_key: rng.random(),
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// ----- ProtocolMessage: Public -----------------------------------------------
+
+impl BackendKeyDataFrame {
+    pub fn to_bytes_safe(&self) -> Bytes {
+        let mut buf = BytesMut::with_capacity(13);
+        buf.put_u8(b'K');
+        buf.put_u32(12);
+        buf.put_i32(self.process_id);
+        buf.put_i32(self.secret_key);
+        buf.freeze()
+    }
 }
 
 // -----------------------------------------------------------------------------
