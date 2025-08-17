@@ -24,6 +24,15 @@ const MESSAGE_IN_BYTES: &[u8] = b"R\x00\x00\x00\x08\x00\x00\x00\x07";
 pub struct AuthenticationGssFrame;
 
 // -----------------------------------------------------------------------------
+// ----- ProtocolMessage: Static -----------------------------------------------
+
+impl AuthenticationGssFrame {
+    pub fn static_bytes() -> Bytes {
+        Bytes::from_static(MESSAGE_IN_BYTES)
+    }
+}
+
+// -----------------------------------------------------------------------------
 // ----- Error -----------------------------------------------------------------
 
 #[derive(Debug)]

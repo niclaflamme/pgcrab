@@ -1,4 +1,4 @@
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -6,7 +6,10 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::wire_protocol::frontend::frames::StartupFrame;
+use crate::shared_types::AuthStage;
+use crate::wire_protocol::frontend::MessageType;
+
+use super::{peek::peek, sequence_tracker::SequenceTracker};
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
@@ -16,48 +19,19 @@ const SCRATCH_CAPACITY_HINT: usize = 4096;
 // -----------------------------------------------------------------------------
 // ----- FrontendConnection ----------------------------------------------------
 
+#[derive(Debug)]
 pub struct FrontendConnection {
-    stage: Stage,
+    stage: AuthStage,
 
-    inbox_scratch: BytesMut,  // socket -> parser
-    outbox_scratch: BytesMut, // encoder -> channel
+    inbox: BytesMut,
+    inbox_tracker: SequenceTracker,
+
+    #[allow(dead_code)]
+    outbox: BytesMut,
 
     reader: tokio::net::tcp::OwnedReadHalf,
     async_writer: mpsc::UnboundedSender<Bytes>,
 }
-
-// -----------------------------------------------------------------------------
-// ----- Internal: Stage -------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stage {
-    Startup,        // not yet started handshake (unauthenticated)
-    AuthInProgress, // in the auth conversation
-    Ready,          // authenticated and ready for SQL
-}
-
-// -----------------------------------------------------------------------------
-// ----- Internal: Remove me ---------------------------------------------------
-
-enum OutMsg {
-    Static(&'static [u8]),
-    Owned(Bytes),
-}
-
-impl OutMsg {
-    #[inline]
-    fn into_bytes(self) -> Bytes {
-        match self {
-            OutMsg::Static(s) => Bytes::from_static(s), // zero-copy ref to static
-            OutMsg::Owned(b) => b,                      // move, no clone
-        }
-    }
-}
-
-const SSL_NO: &[u8] = b"N";
-const AUTH_CLEAR: &[u8] = b"R\0\0\0\x08\0\0\0\x03"; // cleartext request
-
-// const READY_I: &[u8] = b"Z\0\0\0\x05I";
 
 // -----------------------------------------------------------------------------
 // ----- FrontendConnection: Static --------------------------------------------
@@ -70,9 +44,10 @@ impl FrontendConnection {
         spawn_writer_task(writer, writer_rx);
 
         Self {
-            stage: Stage::Startup,
-            inbox_scratch: BytesMut::with_capacity(SCRATCH_CAPACITY_HINT),
-            outbox_scratch: BytesMut::with_capacity(SCRATCH_CAPACITY_HINT),
+            stage: AuthStage::Startup,
+            inbox: BytesMut::with_capacity(SCRATCH_CAPACITY_HINT),
+            outbox: BytesMut::with_capacity(SCRATCH_CAPACITY_HINT),
+            inbox_tracker: SequenceTracker::new(),
             reader,
             async_writer: writer_tx,
         }
@@ -86,21 +61,21 @@ impl FrontendConnection {
     pub async fn serve(mut self) -> std::io::Result<()> {
         loop {
             select! {
+
+                // -- Client messages --
                 read_res = async {
-                    self.inbox_scratch.reserve(SCRATCH_CAPACITY_HINT);
-                    self.reader.read_buf(&mut self.inbox_scratch).await
+                    self.inbox.reserve(SCRATCH_CAPACITY_HINT);
+                    self.reader.read_buf(&mut self.inbox).await
                 } => {
                     let n = read_res?;
                     if n == 0 { break; }
 
-                    loop {
-                        let maybe = match self.stage {
-                            Stage::Startup        => Self::try_parse_startup(&mut self.inbox_scratch),
-                            Stage::AuthInProgress => Self::try_parse_auth(&mut self.inbox_scratch),
-                            Stage::Ready          => Self::try_parse_sql(&mut self.inbox_scratch),
-                        };
-                        let Some(frame) = maybe else { break };
-                        self.process_frame(frame);
+                    // 1) check all untracked frames into inbox_tracker
+                    self.track_new_inbox_frames();
+
+                    // 2) process all complete sequences in the inbox
+                    while let Some(sequence) = self.pull_next_sequence() {
+                        self.process_sequence(sequence);
                     }
                 }
             }
@@ -114,113 +89,97 @@ impl FrontendConnection {
 // ----- FrontendConnection: Private -------------------------------------------
 
 impl FrontendConnection {
-    // static frame
-    fn send_static(&self, s: &'static [u8]) {
-        let _ = self.async_writer.send(Bytes::from_static(s));
+    fn track_new_inbox_frames(&mut self) {
+        loop {
+            let cursor = self.inbox_tracker.len();
+
+            let frame_slice = &self.inbox[cursor..];
+            if frame_slice.is_empty() {
+                break;
+            }
+
+            let Some(message) = peek(self.stage, frame_slice) else {
+                break;
+            };
+
+            self.inbox_tracker.push(message.message_type, message.len);
+        }
     }
 
-    // dynamic frame
-    fn finish_and_send(&mut self, start: usize) {
-        let end = self.outbox_scratch.len();
-        let frame_len = end - start;
-        let len_field = (frame_len as u32) - 1;
-        self.outbox_scratch[start + 1..start + 5].copy_from_slice(&len_field.to_be_bytes());
-        let bytes = self.outbox_scratch.split_to(frame_len).freeze(); // -> Bytes
-        let _ = self.async_writer.send(bytes);
+    fn pull_next_sequence(&mut self) -> Option<BytesMut> {
+        let (messages, bytes_taken) = self.inbox_tracker.take_until_flush(self.stage)?;
+        if messages.is_empty() {
+            return None;
+        }
+
+        let sequence = self.inbox.split_to(bytes_taken);
+        Some(sequence)
     }
 
-    fn process_frame(&mut self, frame: BytesMut) {
+    fn process_sequence(&mut self, sequence: BytesMut) {
         match self.stage {
-            Stage::Startup => {
-                if frame.len() == 8 {
-                    let code = u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]);
-                    if code == 80877103 || code == 80877104 {
-                        let _ = self.async_writer.send(OutMsg::Static(SSL_NO).into_bytes());
-                        return;
-                    }
-                }
+            AuthStage::Startup => self.process_sequence_startup(sequence),
+            AuthStage::Authenticating => self.process_sequence_authenticating(sequence),
+            AuthStage::Ready => self.process_sequence_ready(sequence),
+        }
+    }
 
-                let _ = self
-                    .async_writer
-                    .send(OutMsg::Static(AUTH_CLEAR).into_bytes());
+    fn process_sequence_startup(&mut self, sequence: BytesMut) {
+        let found = peek(AuthStage::Startup, &sequence[..]).unwrap();
 
-                self.stage = Stage::AuthInProgress;
+        match found.message_type {
+            MessageType::SslRequest => {
+                let response = Bytes::from_static(b"TODO");
+                self.async_writer.send(response).unwrap();
             }
 
-            Stage::AuthInProgress => {
-                self.send_auth_ok(); // dynamic example
-                self.send_ready_for_query(); // dynamic example
-                self.stage = Stage::Ready;
+            MessageType::GssEncRequest => {
+                let response = Bytes::from_static(b"TODO");
+                self.async_writer.send(response).unwrap();
             }
 
-            Stage::Ready => {
-                self.send_ready_for_query();
+            MessageType::CancelRequest => {
+                let response = Bytes::from_static(b"TODO");
+                self.async_writer.send(response).unwrap();
+            }
+
+            MessageType::Startup => {
+                let response = Bytes::from_static(b"TODO");
+                self.async_writer.send(response).unwrap();
+            }
+
+            _ => {
+                println!("Unexpected message in startup: {:?}", found.message_type);
             }
         }
     }
 
-    fn try_parse_startup(buf: &mut BytesMut) -> Option<BytesMut> {
-        let Some(len) = StartupFrame::peek(buf) else {
-            return None;
-        };
+    fn process_sequence_authenticating(&mut self, sequence: BytesMut) {
+        let found = peek(AuthStage::Authenticating, &sequence[..]).unwrap();
 
-        Some(buf.split_to(len))
-    }
+        match found.message_type {
+            MessageType::PasswordMessage => {
+                let response = Bytes::from_static(b"TODO");
+                self.async_writer.send(response).unwrap();
+                self.stage = AuthStage::Ready;
+            }
 
-    fn try_parse_auth(buf: &mut BytesMut) -> Option<BytesMut> {
-        if buf.len() < 5 {
-            println!("buffy: {:?}", &buf);
-            println!("too short");
-            return None;
+            _ => {
+                println!(
+                    "Unexpected message in authenticating: {:?}",
+                    found.message_type
+                );
+            }
         }
-
-        if buf[0] != b'p' {
-            println!("not p");
-            return None;
-        }
-
-        let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-        let total = 1 + len; // len excludes the type byte
-
-        if buf.len() < total {
-            println!("not long enough");
-            return None;
-        }
-
-        println!("WOOHOOO");
-        println!("WOOHOOO");
-        println!("WOOHOOO");
-        Some(buf.split_to(total))
     }
 
-    fn try_parse_sql(_buf: &mut BytesMut) -> Option<BytesMut> {
-        println!("parsing sql...");
-        None
-    }
-
-    fn send_auth_ok(&mut self) {
-        let start = self.begin_typed_frame(b'R');
-        self.outbox_scratch.put_u32(0); // AuthenticationOk
-        self.finish_and_send(start);
-    }
-
-    fn send_ready_for_query(&mut self) {
-        let start = self.begin_typed_frame(b'Z');
-        self.outbox_scratch.put_u8(b'I'); // idle
-        self.finish_and_send(start);
-    }
-
-    #[inline]
-    fn begin_typed_frame(&mut self, tag: u8) -> usize {
-        let start = self.outbox_scratch.len();
-        self.outbox_scratch.put_u8(tag);
-        self.outbox_scratch.put_u32(0); // placeholder
-        start
+    fn process_sequence_ready(&mut self, sequence: BytesMut) {
+        println!("R.SEQ: {:?}", sequence);
     }
 }
 
 // -----------------------------------------------------------------------------
-// ----- Internal: Async Writer ------------------------------------------------
+// ----- Internal: Helpers -----------------------------------------------------
 
 fn spawn_writer_task(
     mut writer: tokio::net::tcp::OwnedWriteHalf,

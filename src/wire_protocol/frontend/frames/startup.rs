@@ -22,11 +22,6 @@ pub struct StartupFrame<'a> {
     pub parameters: Vec<(&'a str, &'a str)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StartupPeek {
-    pub total_length: usize, // includes the 4-byte length itself
-}
-
 // -----------------------------------------------------------------------------
 // ----- Error -----------------------------------------------------------------
 
@@ -235,22 +230,6 @@ mod tests {
 
 // -----------------------------------------------------------------------------
 // ----- Constants / Kinds -----------------------------------------------------
-
-impl<'a> StartupFrame<'a> {
-    /// Non-destructive: if a full frame is present, return its length and kind.
-    pub fn peek(buf: &BytesMut) -> Option<usize> {
-        if buf.len() < 8 {
-            return None;
-        }
-
-        let total_length = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-        if total_length < 8 || buf.len() < total_length {
-            return None;
-        }
-
-        Some(total_length)
-    }
-}
 
 // /// Destructive: if a full frame is present, drain it from `buf`.
 // pub fn take(buf: &mut BytesMut) -> Option<StartupEnvelope> {

@@ -8,7 +8,7 @@ use pgcrab::{Config, FrontendConnection};
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
 
-const APP_NAME: &str = "🦀 pgcrab";
+const APP_NAME: &str = "🦀 PgCrab";
 
 // -----------------------------------------------------------------------------
 // ----- Main ------------------------------------------------------------------
@@ -52,12 +52,12 @@ async fn run_forever() -> std::io::Result<()> {
 
     let listener: TcpListener = socket.listen(1024)?;
 
-    info!("{} listening on {}", APP_NAME, config.listen_addr);
+    info!("{} :: Listening on {}", APP_NAME, config.listen_addr);
 
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => {
-                info!("{} shutting down", APP_NAME);
+                info!("{} :: Shutting down", APP_NAME);
                 break;
             }
 
