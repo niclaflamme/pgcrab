@@ -6,12 +6,13 @@ use tokio::{
     select,
 };
 
-use crate::ErrorResponse;
 use crate::config::users::UsersConfig;
 use crate::shared_types::AuthStage;
 use crate::wire_protocol::WireSerializable;
 use crate::wire_protocol::backend::BackendKeyDataFrame;
 use crate::wire_protocol::frontend::{MessageType, frames as fe_frames};
+use crate::wire_protocol_v2::utils::peek_frontend;
+use crate::{ErrorResponse, shared_types::BackendIdentity};
 
 use super::{peek::peek, sequence_tracker::SequenceTracker};
 
@@ -29,7 +30,7 @@ pub struct FrontendConnection {
     username: Option<String>,
 
     #[allow(dead_code)]
-    backend_identity_frame: BackendKeyDataFrame,
+    backend_identity: BackendIdentity,
 
     stage: AuthStage,
 
@@ -52,7 +53,7 @@ impl FrontendConnection {
         Self {
             database: None,
             username: None,
-            backend_identity_frame: BackendKeyDataFrame::random(),
+            backend_identity: BackendIdentity::random(),
             stage: AuthStage::Startup,
             inbox: BytesMut::with_capacity(SCRATCH_CAPACITY_HINT),
             inbox_tracker: SequenceTracker::new(),
@@ -112,29 +113,29 @@ impl FrontendConnection {
                 break;
             }
 
-            let Some(message) = peek(self.stage, frame_slice) else {
+            let Some(result) = peek_frontend(self.stage, frame_slice) else {
                 break;
             };
 
-            self.inbox_tracker.push(message.message_type, message.len);
+            self.inbox_tracker.push(result.message_type, result.len);
         }
     }
 
     fn pull_next_sequence(&mut self) -> Option<BytesMut> {
-        let (messages, bytes_taken) = self.inbox_tracker.take_until_flush(self.stage)?;
-        if messages.is_empty() {
+        let Some(bytes_to_take) = self.inbox_tracker.take_until_flush(self.stage) else {
             return None;
-        }
+        };
 
-        let sequence = self.inbox.split_to(bytes_taken);
+        let sequence = self.inbox.split_to(bytes_to_take);
+
         Some(sequence)
     }
 
-    fn process_sequence(&mut self, sequence: BytesMut) {
+    fn process_sequence(&mut self, seq_or_msg: BytesMut) {
         match self.stage {
-            AuthStage::Startup => self.process_startup_sequence(sequence),
-            AuthStage::Authenticating => self.process_authenticating_sequence(sequence),
-            AuthStage::Ready => self.process_ready_sequence(sequence),
+            AuthStage::Startup => self.process_startup_message(seq_or_msg),
+            AuthStage::Authenticating => self.process_authenticating_message(seq_or_msg),
+            AuthStage::Ready => self.process_ready_sequence(seq_or_msg),
         }
     }
 
@@ -155,18 +156,20 @@ impl FrontendConnection {
 // ----- FrontendConnection: Process Startup Sequence --------------------------
 
 impl FrontendConnection {
-    fn process_startup_sequence(&mut self, sequence: BytesMut) {
-        let found = peek(AuthStage::Startup, &sequence[..]).unwrap();
+    fn process_startup_message(&mut self, message: BytesMut) {
+        let found = peek(AuthStage::Startup, &message[..]).unwrap();
 
         match found.message_type {
             MessageType::SslRequest => {
-                // not supporting TLS/GSS yet -> reply 'N' and stay in Startup, client will send real Startup next
+                // Not supporting TLSyet -> reply 'N' and stay in Startup
+                // Client will send real Startup next
                 self.batch_response(&Self::be_ssl_no());
             }
 
             MessageType::GssEncRequest => {
-                let response = Bytes::from_static(b"TODO");
-                self.batch_response(&response);
+                // Not supporting GSS yet -> reply 'N' and stay in Startup.
+                // Client will send real Startup next
+                self.batch_response(&Self::be_ssl_no());
             }
 
             MessageType::CancelRequest => {
@@ -175,16 +178,16 @@ impl FrontendConnection {
             }
 
             MessageType::Startup => {
-                let Ok(startup_frame) = fe_frames::StartupFrame::from_bytes(&sequence) else {
+                let Ok(startup_frame) = fe_frames::StartupFrame::from_bytes(&message) else {
                     let err = ErrorResponse::internal_error("bad startup message");
                     self.batch_response(&err.to_bytes());
                     return;
                 };
 
+                self.stage = AuthStage::Authenticating;
+
                 self.username = Some(startup_frame.user.to_string());
                 self.database = Some(startup_frame.database.to_string());
-
-                self.stage = AuthStage::Startup;
 
                 self.batch_response(&Self::be_auth_cleartext());
             }
@@ -202,8 +205,8 @@ impl FrontendConnection {
 // ----- FrontendConnection: Process Authenticating Sequence -------------------
 
 impl FrontendConnection {
-    fn process_authenticating_sequence(&mut self, sequence: BytesMut) {
-        let Ok(frame) = fe_frames::PasswordMessageFrame::from_bytes(&sequence) else {
+    fn process_authenticating_message(&mut self, message: BytesMut) {
+        let Ok(frame) = fe_frames::PasswordMessageFrame::from_bytes(&message) else {
             let error = ErrorResponse::internal_error("cannot parse password");
             self.batch_response(&error.to_bytes());
             return;
@@ -211,32 +214,23 @@ impl FrontendConnection {
 
         let ok = self.authenticate(frame.password);
         if !ok {
-            // correct behavior is to send an auth error and close the connection.
-            // If you have a SQLSTATE-aware builder, use 28P01; otherwise internal_error is fine for now.
             let error = ErrorResponse::internal_error("password authentication failed");
             self.batch_response(&error.to_bytes());
-            // caller loop will flush; after flush, you should close the socket.
-            // Minimal: drop self.stage or mark a close flag. Your loop exits on n==0 anyway.
             return;
         }
 
-        // success: transition and send the banner
         self.stage = AuthStage::Ready;
 
         // AuthenticationOk
         self.batch_response(&Self::be_auth_ok());
 
         // ParameterStatus (keep it minimal but sane)
-        self.batch_response(&Self::be_param_status("server_version", "16.0"));
         self.batch_response(&Self::be_param_status("server_encoding", "UTF8"));
         self.batch_response(&Self::be_param_status("client_encoding", "UTF8"));
-        self.batch_response(&Self::be_param_status("DateStyle", "ISO, MDY"));
-        self.batch_response(&Self::be_param_status("integer_datetimes", "on"));
-        self.batch_response(&Self::be_param_status("standard_conforming_strings", "on"));
-        self.batch_response(&Self::be_param_status("IntervalStyle", "postgres"));
 
         // BackendKeyData
-        self.batch_response(&self.backend_identity_frame.to_bytes_safe());
+        let backend_key_data_frame = BackendKeyDataFrame::from(&self.backend_identity);
+        self.batch_response(&backend_key_data_frame.to_bytes_safe());
 
         // ReadyForQuery (idle)
         self.batch_response(&Self::be_ready(b'I'));
@@ -273,16 +267,29 @@ impl FrontendConnection {
 }
 
 // -----------------------------------------------------------------------------
+// ----- FrontendConnection: Process Ready Sequence ----------------------------
+
+impl FrontendConnection {
+    fn process_ready_sequence(&mut self, sequence: BytesMut) {
+        println!("i am here: process_ready_sequence (len={})", sequence.len());
+        println!("R.SEQ: {:?}", sequence);
+
+        // Dummy failure so psql doesn't hang. Then return to idle.
+        let err = ErrorResponse::internal_error("statement execution not implemented");
+        self.batch_response(&err.to_bytes());
+        self.batch_response(&Self::be_ready(b'I'));
+    }
+}
+
+// -----------------------------------------------------------------------------
 // ----- FrontendConnection: Helpers, Backend Messages -------------------------
 
 impl FrontendConnection {
     fn be_ssl_no() -> Bytes {
-        // single 'N' byte
         Bytes::from_static(b"N")
     }
 
     fn be_auth_cleartext() -> Bytes {
-        // 'R' + len(8) + code(3)
         let mut b = BytesMut::with_capacity(1 + 4 + 4);
         b.put_u8(b'R');
         b.put_u32(8);
@@ -291,7 +298,6 @@ impl FrontendConnection {
     }
 
     fn be_auth_ok() -> Bytes {
-        // 'R' + len(8) + code(0)
         let mut b = BytesMut::with_capacity(1 + 4 + 4);
         b.put_u8(b'R');
         b.put_u32(8);
@@ -300,7 +306,6 @@ impl FrontendConnection {
     }
 
     fn be_param_status(name: &str, value: &str) -> Bytes {
-        // 'S' + len + name\0value\0
         let n = name.as_bytes();
         let v = value.as_bytes();
         let payload_len = 4 + n.len() + 1 + v.len() + 1;
@@ -315,21 +320,11 @@ impl FrontendConnection {
     }
 
     fn be_ready(status: u8) -> Bytes {
-        // 'Z' + len(5) + status('I' idle | 'T' in txn | 'E' failed txn)
         let mut b = BytesMut::with_capacity(1 + 4 + 1);
         b.put_u8(b'Z');
         b.put_u32(5);
         b.put_u8(status);
         b.freeze()
-    }
-}
-
-// -----------------------------------------------------------------------------
-// ----- FrontendConnection: Process Ready Sequence ----------------------------
-
-impl FrontendConnection {
-    fn process_ready_sequence(&mut self, sequence: BytesMut) {
-        println!("R.SEQ: {:?}", sequence);
     }
 }
 

@@ -1,4 +1,3 @@
-pub mod decoder;
 pub mod error;
 pub mod frames;
 pub mod message_type;

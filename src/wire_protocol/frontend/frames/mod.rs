@@ -21,7 +21,7 @@ pub mod startup;
 pub mod sync;
 pub mod terminate;
 
-pub use bind::{BindError, BindFrame};
+pub use bind::{BindFrameError, BindFrame};
 pub use cancel_request::{CancelRequestError, CancelRequestFrame};
 pub use close::{CloseError, CloseFrame};
 pub use copy_data::{CopyDataError, CopyDataFrame};

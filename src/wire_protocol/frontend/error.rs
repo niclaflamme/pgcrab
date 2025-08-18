@@ -12,7 +12,7 @@ use crate::wire_protocol::frontend::frames::{
 #[derive(Debug)]
 pub enum ParseError {
     // Message parsing errors
-    Bind(bind::BindError),
+    Bind(bind::BindFrameError),
     CancelRequest(cancel_request::CancelRequestError),
     Close(close::CloseError),
     CopyData(copy_data::CopyDataError),
@@ -42,8 +42,8 @@ pub enum ParseError {
     UnexpectedAuthOutsideAuthState,
 }
 
-impl From<bind::BindError> for ParseError {
-    fn from(e: bind::BindError) -> Self {
+impl From<bind::BindFrameError> for ParseError {
+    fn from(e: bind::BindFrameError) -> Self {
         ParseError::Bind(e)
     }
 }

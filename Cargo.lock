@@ -382,6 +382,7 @@ dependencies = [
  "bytes",
  "clap",
  "humantime",
+ "memchr",
  "once_cell",
  "parking_lot",
  "rand",

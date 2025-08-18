@@ -1,26 +1,24 @@
-use smallvec::SmallVec;
+use std::collections::VecDeque;
 
 use crate::shared_types::AuthStage;
-use crate::wire_protocol::frontend::MessageType;
+use crate::wire_protocol_v2::types::MessageType;
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
 
-const SMALLVEC_SIZE: usize = 16;
-
-const MAX_COUNT: usize = 8;
-const MAX_SIZE: usize = 4 * 1024;
+const MAX_COUNT_BEFORE_FLUSH: usize = 10;
+const MAX_BYTES_BEFORE_FLUSH: usize = 4 * 1024;
 
 // -----------------------------------------------------------------------------
 // ----- SequenceTracker -------------------------------------------------------
 
 #[derive(Debug)]
 pub struct SequenceTracker {
-    frames: SmallVec<[MessageMetadata; SMALLVEC_SIZE]>,
+    frames: VecDeque<FrameSummary>,
 }
 
 #[derive(Debug)]
-pub struct MessageMetadata {
+pub struct FrameSummary {
     pub message_type: MessageType,
     pub len: usize,
 }
@@ -40,7 +38,7 @@ struct FlushBoundary {
 impl SequenceTracker {
     pub fn new() -> Self {
         Self {
-            frames: SmallVec::new(),
+            frames: VecDeque::new(),
         }
     }
 }
@@ -50,30 +48,18 @@ impl SequenceTracker {
 
 impl SequenceTracker {
     pub fn push(&mut self, message_type: MessageType, len: usize) {
-        self.frames.push(MessageMetadata { len, message_type });
+        self.frames.push_back(FrameSummary { len, message_type });
     }
 
-    pub fn take_until_flush(
-        &mut self,
-        stage: AuthStage,
-    ) -> Option<(SmallVec<[MessageMetadata; SMALLVEC_SIZE]>, usize)> {
+    pub fn take_until_flush(&mut self, stage: AuthStage) -> Option<usize> {
         let boundary = self.find_flush_boundary(stage)?;
-
-        let drained: SmallVec<[MessageMetadata; SMALLVEC_SIZE]> =
-            self.frames.drain(..boundary.frames_to_flush).collect();
-
-        Some((drained, boundary.bytes_to_flush))
+        self.frames.drain(0..boundary.frames_to_flush);
+        Some(boundary.bytes_to_flush)
     }
 
     /// Length of all frames in the tracker, in bytes
     pub fn len(&self) -> usize {
-        let mut bytes = 0;
-
-        for meta in self.frames.iter() {
-            bytes += meta.len;
-        }
-
-        bytes
+        self.frames.iter().map(|meta| meta.len).sum()
     }
 
     /// Count the number of frames in the tracker
@@ -100,33 +86,23 @@ impl SequenceTracker {
     }
 
     fn find_flush_boundary_startup(&self) -> Option<FlushBoundary> {
-        if self.frames.is_empty() {
-            return None;
-        }
-
         Some(FlushBoundary {
             frames_to_flush: 1,
-            bytes_to_flush: self.frames[0].len,
+            bytes_to_flush: self.frames.front()?.len,
         })
     }
 
     fn find_flush_boundary_authenticating(&self) -> Option<FlushBoundary> {
-        if self.frames.is_empty() {
-            return None;
-        }
-
         Some(FlushBoundary {
             frames_to_flush: 1,
-            bytes_to_flush: self.frames[0].len,
+            bytes_to_flush: self.frames.front()?.len,
         })
     }
 
     fn find_flush_boundary_ready(&self) -> Option<FlushBoundary> {
         let mut bytes_to_flush = 0;
-
         for (index, meta) in self.frames.iter().enumerate() {
             bytes_to_flush += meta.len;
-
             let is_boundary = match meta.message_type {
                 MessageType::Sync => true,
                 MessageType::Flush => true,
@@ -134,9 +110,8 @@ impl SequenceTracker {
                 MessageType::Query => true,
                 _ => false,
             };
-
-            let is_too_large = bytes_to_flush >= MAX_SIZE || index >= MAX_COUNT;
-
+            let is_too_large =
+                bytes_to_flush >= MAX_BYTES_BEFORE_FLUSH || index >= MAX_COUNT_BEFORE_FLUSH;
             if is_boundary || is_too_large {
                 return Some(FlushBoundary {
                     frames_to_flush: index + 1,
@@ -144,7 +119,6 @@ impl SequenceTracker {
                 });
             }
         }
-
         None
     }
 }

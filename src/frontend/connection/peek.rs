@@ -21,7 +21,7 @@ pub struct FoundMessage {
 pub fn peek(stage: AuthStage, bytes: &[u8]) -> Option<FoundMessage> {
     match stage {
         AuthStage::Startup => peek_startup(bytes),
-        AuthStage::Authenticating { .. } => peek_auth_in_progress(bytes),
+        AuthStage::Authenticating => peek_auth_in_progress(bytes),
         AuthStage::Ready => peek_ready(bytes),
     }
 }

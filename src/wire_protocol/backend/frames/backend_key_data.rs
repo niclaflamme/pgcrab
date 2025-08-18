@@ -11,6 +11,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use rand::Rng;
 use std::{error::Error as StdError, fmt};
 
+use crate::shared_types::BackendIdentity;
 use crate::wire_protocol::WireSerializable;
 
 // -----------------------------------------------------------------------------
@@ -26,6 +27,13 @@ pub struct BackendKeyDataFrame {
 // ----- ProtocolMessage: Static -----------------------------------------------
 
 impl BackendKeyDataFrame {
+    pub fn from(identity: &BackendIdentity) -> Self {
+        BackendKeyDataFrame {
+            process_id: identity.process_id,
+            secret_key: identity.secret_key,
+        }
+    }
+
     pub fn random() -> Self {
         let mut rng = rand::rng();
 

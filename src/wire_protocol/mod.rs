@@ -2,6 +2,7 @@ pub mod backend;
 pub mod bidirectional;
 pub mod frontend;
 pub mod types;
+pub mod utils;
 pub mod wire_serializable;
 
 pub use backend::BackendProtocolMessage;

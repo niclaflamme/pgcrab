@@ -7,20 +7,94 @@
 //!
 //! - `CancelRequestFrame`: represents a CancelRequest message with backend PID and secret key.
 //! - `CancelRequestError`: error types for parsing and encoding.
-//!
-//! Implements `WireSerializable` for easy conversion between raw bytes and `CancelRequestFrame`.
 
-use crate::wire_protocol::WireSerializable;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::{error::Error as StdError, fmt};
 
 // -----------------------------------------------------------------------------
-// ----- ProtocolMessage -------------------------------------------------------
+// ----- Constants -------------------------------------------------------------
+
+const MESSAGE_CODE: i32 = 80877102;
+
+// -----------------------------------------------------------------------------
+// ----- CancelRequestFrame ----------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CancelRequestFrame {
     pub pid: i32,
     pub secret: i32,
+}
+
+// -----------------------------------------------------------------------------
+// ----- CancelRequestFrame: Static --------------------------------------------
+
+impl CancelRequestFrame {
+    pub fn peek(bytes: &Bytes) -> Option<usize> {
+        if bytes.len() < 16 {
+            return None;
+        }
+
+        let len = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        if len != 16 {
+            return None;
+        }
+
+        let code = i32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        if code != MESSAGE_CODE {
+            return None;
+        }
+
+        Some(16)
+    }
+
+    pub fn new(pid: i32, secret: i32) -> Self {
+        CancelRequestFrame { pid, secret }
+    }
+
+    pub fn from_bytes(bytes: Bytes) -> Result<Self, CancelRequestError> {
+        if bytes.len() != 16 {
+            return Err(CancelRequestError::UnexpectedLength(bytes.len()));
+        }
+
+        let mut buf = bytes;
+
+        let len = buf.get_i32();
+        if len != 16 {
+            return Err(CancelRequestError::UnexpectedLength(len as usize));
+        }
+
+        let code = buf.get_i32();
+        if code != MESSAGE_CODE {
+            return Err(CancelRequestError::UnexpectedCode(code));
+        }
+
+        let pid = buf.get_i32();
+        let secret = buf.get_i32();
+
+        Ok(CancelRequestFrame { pid, secret })
+    }
+}
+
+// -----------------------------------------------------------------------------
+// ----- CancelRequestFrame: Public --------------------------------------------
+
+impl CancelRequestFrame {
+    pub fn to_bytes(&self) -> Result<Bytes, CancelRequestError> {
+        let mut buf = BytesMut::with_capacity(16);
+        buf.put_i32(16);
+        buf.put_i32(MESSAGE_CODE);
+        buf.put_i32(self.pid);
+        buf.put_i32(self.secret);
+        Ok(buf.freeze())
+    }
+
+    pub fn header_size(&self) -> usize {
+        4
+    }
+
+    pub fn body_size(&self) -> usize {
+        12
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -44,53 +118,6 @@ impl fmt::Display for CancelRequestError {
 impl StdError for CancelRequestError {}
 
 // -----------------------------------------------------------------------------
-// ----- WireSerializable ------------------------------------------------------
-
-impl<'a> WireSerializable<'a> for CancelRequestFrame {
-    type Error = CancelRequestError;
-
-    fn peek(_buf: &BytesMut) -> Option<usize> {
-        None
-    }
-
-    fn from_bytes(bytes: &'a [u8]) -> Result<Self, Self::Error> {
-        if bytes.len() != 16 {
-            return Err(CancelRequestError::UnexpectedLength(bytes.len()));
-        }
-
-        let mut buf = bytes;
-
-        let len = buf.get_i32();
-        if len != 16 {
-            return Err(CancelRequestError::UnexpectedLength(len as usize));
-        }
-
-        let code = buf.get_i32();
-        if code != 80877102 {
-            return Err(CancelRequestError::UnexpectedCode(code));
-        }
-
-        let pid = buf.get_i32();
-        let secret = buf.get_i32();
-
-        Ok(CancelRequestFrame { pid, secret })
-    }
-
-    fn to_bytes(&self) -> Result<Bytes, Self::Error> {
-        let mut buf = BytesMut::with_capacity(16);
-        buf.put_i32(16);
-        buf.put_i32(80877102);
-        buf.put_i32(self.pid);
-        buf.put_i32(self.secret);
-        Ok(buf.freeze())
-    }
-
-    fn body_size(&self) -> usize {
-        12 // code + pid + secret
-    }
-}
-
-// -----------------------------------------------------------------------------
 // ----- Tests -----------------------------------------------------------------
 
 #[cfg(test)]
@@ -108,7 +135,7 @@ mod tests {
     fn roundtrip() {
         let frame = make_frame();
         let encoded = frame.to_bytes().unwrap();
-        let decoded = CancelRequestFrame::from_bytes(encoded.as_ref()).unwrap();
+        let decoded = CancelRequestFrame::from_bytes(encoded).unwrap();
         assert_eq!(decoded.pid, frame.pid);
         assert_eq!(decoded.secret, frame.secret);
     }
@@ -117,11 +144,10 @@ mod tests {
     fn unexpected_length() {
         let mut buf = BytesMut::new();
         buf.put_i32(16);
-        buf.put_i32(80877102);
+        buf.put_i32(MESSAGE_CODE);
         buf.put_i32(1234);
-        // missing secret
-        let raw = buf.freeze().to_vec();
-        let err = CancelRequestFrame::from_bytes(&raw).unwrap_err();
+        let buf = buf.freeze();
+        let err = CancelRequestFrame::from_bytes(buf).unwrap_err();
         matches!(err, CancelRequestError::UnexpectedLength(12));
     }
 
@@ -132,8 +158,8 @@ mod tests {
         buf.put_i32(999999);
         buf.put_i32(1234);
         buf.put_i32(5678);
-        let raw = buf.freeze().to_vec();
-        let err = CancelRequestFrame::from_bytes(&raw).unwrap_err();
+        let buf = buf.freeze();
+        let err = CancelRequestFrame::from_bytes(buf).unwrap_err();
         matches!(err, CancelRequestError::UnexpectedCode(999999));
     }
 
@@ -141,11 +167,11 @@ mod tests {
     fn unexpected_length_in_message() {
         let mut buf = BytesMut::new();
         buf.put_i32(20); // wrong length
-        buf.put_i32(80877102);
+        buf.put_i32(MESSAGE_CODE);
         buf.put_i32(1234);
         buf.put_i32(5678);
-        let raw = buf.freeze().to_vec();
-        let err = CancelRequestFrame::from_bytes(&raw).unwrap_err();
+        let buf = buf.freeze();
+        let err = CancelRequestFrame::from_bytes(buf).unwrap_err();
         matches!(err, CancelRequestError::UnexpectedLength(20));
     }
 }
