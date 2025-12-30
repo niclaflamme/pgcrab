@@ -1,7 +1,8 @@
 use serde::Deserialize;
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, net::TcpListener, path::PathBuf, process::Command, time::Duration};
 use tokio::sync::OnceCell;
 use tokio_postgres::NoTls;
+use tokio::time::sleep;
 
 static SHARDS_OK: OnceCell<()> = OnceCell::const_new();
 
@@ -14,6 +15,35 @@ pub async fn ensure_shards_accessible() {
             }
         })
         .await;
+}
+
+pub fn reserve_port(host: &str) -> u16 {
+    let addr = format!("{host}:0");
+    let listener = TcpListener::bind(&addr).expect("bind ephemeral port");
+    listener.local_addr().unwrap().port()
+}
+
+pub fn spawn_pgcrab(host: &str, port: u16) -> std::process::Child {
+    let exe = env!("CARGO_BIN_EXE_pgcrab");
+    let config_path = std::env::var("PGCRAB_CONFIG_FILE").unwrap_or_else(|_| "pgcrab.toml".into());
+
+    Command::new(exe)
+        .env("PGCRAB_HOST", host)
+        .env("PGCRAB_PORT", port.to_string())
+        .env("PGCRAB_CONFIG_FILE", config_path)
+        .spawn()
+        .expect("spawn pgcrab")
+}
+
+pub async fn wait_for_listen(host: &str, port: u16) {
+    let addr = format!("{host}:{port}");
+    for _ in 0..50 {
+        if std::net::TcpStream::connect(&addr).is_ok() {
+            return;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    panic!("pgcrab did not start listening on {addr}");
 }
 
 pub fn load_config() -> Result<ConfigFile, String> {

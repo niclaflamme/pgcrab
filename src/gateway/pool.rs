@@ -103,6 +103,14 @@ impl ShardPool {
         let conn = BackendConnection::connect(&self.shard.host, self.shard.port)
             .await
             .map_err(|e| format!("failed to connect to backend: {e}"))?;
+        let mut conn = conn;
+        conn.startup(
+            &self.shard.user,
+            &self.shard.shard_name,
+            self.shard.password_exposed(),
+        )
+        .await
+        .map_err(|e| format!("backend startup failed: {e}"))?;
 
         Ok(PooledConnection::new(self.clone(), conn, permit))
     }
@@ -118,6 +126,14 @@ impl ShardPool {
         let conn = BackendConnection::connect(&self.shard.host, self.shard.port)
             .await
             .map_err(|e| format!("failed to connect to backend: {e}"))?;
+        let mut conn = conn;
+        conn.startup(
+            &self.shard.user,
+            &self.shard.shard_name,
+            self.shard.password_exposed(),
+        )
+        .await
+        .map_err(|e| format!("backend startup failed: {e}"))?;
 
         self.push_idle(conn, permit).await;
         Ok(())
