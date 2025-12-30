@@ -3,7 +3,6 @@ pub mod config;
 pub mod errors;
 pub mod frontend;
 pub mod gateway;
-pub mod net;
 pub mod parser;
 pub mod shared_types;
 pub mod tls;
