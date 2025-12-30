@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::{
     fs,
     net::{IpAddr, SocketAddr},
@@ -12,7 +12,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 use std::sync::Arc;
 
 use pgcrab::{
-    Config, FrontendConnection, config::shards::ShardsConfig, config::types::LogLevel,
+    Config, FrontendConnection, admin, config::shards::ShardsConfig, config::types::LogLevel,
     gateway::GatewayPools,
 };
 
@@ -26,19 +26,31 @@ const APP_NAME: &str = "🦀 PgCrab";
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    setup().await;
-    run_forever().await
+    let args = Args::try_parse().unwrap_or_else(|e| panic!("Invalid CLI/ENV: {e}"));
+    match args {
+        Args {
+            command: Some(Command::Admin(admin_args)),
+            ..
+        } => {
+            run_admin(admin_args);
+            Ok(())
+        }
+        args => {
+            let serve_args = args.into_serve_args();
+            setup(&serve_args).await;
+            run_forever().await
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
 // ----- Setup -----------------------------------------------------------------
 
-async fn setup() {
-    let args = Args::try_parse().unwrap_or_else(|e| panic!("Invalid CLI/ENV: {e}"));
+async fn setup(args: &ServeArgs) {
     must_exist_file(&args.config_file, "--config / pgcrab.toml");
 
     let listen_addr = SocketAddr::from((args.host, args.port));
-    Config::init(listen_addr, args.log_level, args.config_file).await;
+    Config::init(listen_addr, args.log_level.clone(), args.config_file.clone()).await;
 
     init_tracing();
 }
@@ -107,13 +119,16 @@ async fn run_forever() -> std::io::Result<()> {
 #[derive(Parser, Debug)]
 #[command(name = "pgcrab", version, about = "Postgres pooler")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     // IPv4 or IPv6 literal (e.g., 0.0.0.0, 127.0.0.1, ::, ::1). Required via CLI or ENV.
     #[arg(long = "host", short = 'H', env = "PGCRAB_HOST")]
-    host: IpAddr,
+    host: Option<IpAddr>,
 
     // Required via CLI or ENV.
     #[arg(long = "port", short = 'p', env = "PGCRAB_PORT")]
-    port: u16,
+    port: Option<u16>,
 
     // Not required via CLI or ENV (defaults to info).
     #[arg(long = "log", default_value = "info")]
@@ -121,7 +136,46 @@ struct Args {
 
     // Must exist; no defaults.
     #[arg(long = "config", env = "PGCRAB_CONFIG_FILE")]
+    config_file: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    Admin(AdminArgs),
+}
+
+#[derive(Parser, Debug)]
+struct AdminArgs {
+    #[command(subcommand)]
+    command: AdminCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum AdminCommand {
+    Stats,
+}
+
+#[derive(Debug)]
+struct ServeArgs {
+    host: IpAddr,
+    port: u16,
+    log_level: LogLevel,
     config_file: PathBuf,
+}
+
+impl Args {
+    fn into_serve_args(self) -> ServeArgs {
+        ServeArgs {
+            host: expect_arg(self.host, "host", "--host / PGCRAB_HOST"),
+            port: expect_arg(self.port, "port", "--port / PGCRAB_PORT"),
+            log_level: self.log_level,
+            config_file: expect_arg(self.config_file, "config", "--config / PGCRAB_CONFIG_FILE"),
+        }
+    }
+}
+
+fn expect_arg<T>(value: Option<T>, name: &str, hint: &str) -> T {
+    value.unwrap_or_else(|| panic!("missing required {name} (from {hint})"))
 }
 
 fn must_exist_file(path: &Path, hint: &str) {
@@ -131,6 +185,15 @@ fn must_exist_file(path: &Path, hint: &str) {
 
     if !md.is_file() {
         panic!("path is not a file: {} (from {hint})", path.display());
+    }
+}
+
+fn run_admin(args: AdminArgs) {
+    match args.command {
+        AdminCommand::Stats => {
+            let stats = admin::parse_cache_stats();
+            println!("{}", admin::format_parse_cache_stats(stats));
+        }
     }
 }
 

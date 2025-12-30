@@ -5,6 +5,8 @@ use std::sync::{Arc, OnceLock, RwLock};
 use pg_query::ParseResult;
 use tracing::debug;
 
+use crate::analytics;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatementType {
     Select,
@@ -48,10 +50,12 @@ pub fn parse(query: &str) -> Result<ParsedQuery, ParseError> {
     let key = query.as_bytes();
     let key_hash = hash_bytes(key);
     if let Some(cached) = cache.get(key_hash, key) {
+        analytics::inc_parse_cache_hit();
         debug!(cache = "hit", query_len = query.len(), "parser cache");
         return Ok((*cached).clone());
     }
 
+    analytics::inc_parse_cache_miss();
     debug!(cache = "miss", query_len = query.len(), "parser cache");
     let ast = pg_query::parse(query)
         .map_err(|err| ParseError::new(err.to_string()))

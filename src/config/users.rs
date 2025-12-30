@@ -136,6 +136,7 @@ impl UsersConfig {
                 pool_size: user.pool_size,
                 pooler_mode: user.pooler_mode,
                 statement_timeout: user.statement_timeout,
+                admin: user.admin,
             };
 
             let key = UserKey::new(&record.client_username);
@@ -213,6 +214,9 @@ struct UsersFileEntry {
 
     #[serde(default, deserialize_with = "de_ms")]
     statement_timeout: Option<Duration>,
+
+    #[serde(default)]
+    admin: bool,
 }
 
 // -----------------------------------------------------------------------------
@@ -229,6 +233,7 @@ pub struct UserRecord {
     pub pool_size: Option<u32>,
     pub pooler_mode: Option<PoolerMode>,
     pub statement_timeout: Option<Duration>,
+    pub admin: bool,
 }
 
 // -----------------------------------------------------------------------------
@@ -367,6 +372,7 @@ mod tests {
             server_password = "server-secret"
             pooler_mode = "session"
             statement_timeout = 10_000
+            admin = true
         "#;
 
         let tmp = write_tmp(toml);
@@ -377,12 +383,14 @@ mod tests {
         assert_eq!(rec.pool_size, Some(64));
         assert_eq!(rec.pooler_mode, Some(PoolerMode::Transaction));
         assert_eq!(rec.statement_timeout, Some(Duration::from_millis(30_000)));
+        assert!(!rec.admin);
 
         let rec = users.authenticate("bob", "opensesame").unwrap();
         assert_eq!(rec.server_username, "pgapp");
         assert_eq!(rec.server_password.expose_secret(), "server-secret");
         assert_eq!(rec.pooler_mode, Some(PoolerMode::Session));
         assert_eq!(rec.statement_timeout, Some(Duration::from_millis(10_000)));
+        assert!(rec.admin);
     }
 
     #[tokio::test]

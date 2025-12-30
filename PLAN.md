@@ -1,19 +1,25 @@
-# Plan: Prepared Statements in PgCrab (current state)
+# Plan: Analytics Module (parse cache metrics)
 
-## Status (implemented)
-- Cache named `Parse` frames per client session.
-- Track per-backend prepared names.
-- Inject cached `Parse` before `Bind` when the backend hasn’t seen it.
-- Suppress injected `ParseComplete` to keep client responses aligned.
-- Track statement `Close` and drop cached/prepared entries.
+## Goal
+Track parse cache activity with atomic counters so we can measure effectiveness.
 
-## Next steps (priority)
-1. Add backend reset on pool release.
-   - Send a reset query (prefer `DISCARD ALL`) before placing a connection back in the idle pool.
-   - Drain backend responses until `ReadyForQuery`.
-2. Add integration tests for prepared statements across pooled backends.
-   - Prepare named statement; execute across multiple transactions; ensure no extra `ParseComplete` reaches the client.
-   - Ensure a new client cannot use a previously prepared statement after pool reuse.
-3. Extend protocol handling for edge cases.
-   - Decide whether to cache/replay `Describe`.
-   - Decide how to update the cache on `DEALLOCATE`/`DISCARD` via simple `Query`.
+## Scope
+- Add an `analytics` module with two `AtomicU128` counters:
+  - `parse_cache_hit`
+  - `parse_cache_miss`
+- Increment the counters on parse-cache hit/miss in `src/parser/mod.rs`.
+- Expose a small API for incrementing and snapshotting counts.
+
+## Implementation steps
+1. Create `src/analytics/mod.rs`.
+   - Define `static` counters using `AtomicU128` with relaxed ordering.
+   - Provide `inc_parse_cache_hit()`, `inc_parse_cache_miss()`, and `snapshot()`.
+2. Wire counters into the parse cache.
+   - In `ParserCache::get` (or the cache-hit branch), call `inc_parse_cache_hit()`.
+   - In the cache-miss path (before parsing), call `inc_parse_cache_miss()`.
+3. Add a lightweight test (optional).
+   - Verify increments and snapshotting in a unit test, with a reset helper guarded under `cfg(test)`.
+
+## Open questions
+- Do we need a reset API outside tests?
+- Should we include per-statement or per-shard counters later?

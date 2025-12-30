@@ -1,3 +1,5 @@
+pub mod admin;
+pub mod analytics;
 pub mod backend;
 pub mod config;
 pub mod errors;

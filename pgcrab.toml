@@ -5,7 +5,7 @@ name = "pgcrab_shard_1"
 user = "mr_krabs"
 password = "i_love_money"
 min_connections = 5
-max_connections = 20
+max_connections = 50
 
 [[shards]]
 host = "127.0.0.1"
@@ -13,6 +13,8 @@ port = 5432
 name = "pgcrab_shard_2"
 user = "mr_krabs"
 password = "i_love_money"
+min_connections = 2
+max_connections = 50
 
 [[shards]]
 host = "127.0.0.1"
@@ -20,7 +22,14 @@ port = 5432
 name = "pgcrab_shard_3"
 user = "mr_krabs"
 password = "i_love_money"
+min_connections = 2
+max_connections = 50
 
 [[users]]
 username = "pgcrab"
 password = "pgcrab"
+
+[[users]]
+username = "admin"
+password = "bigboss"
+admin = true
