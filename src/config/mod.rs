@@ -1,5 +1,5 @@
-pub mod cli;
 pub mod config;
+pub mod shards;
 pub mod types;
 pub mod users;
 

@@ -6,15 +6,17 @@ use tokio::{
     select,
 };
 
+use crate::config::shards::ShardsConfig;
 use crate::config::users::UsersConfig;
+use crate::gateway::BackendConnection;
 use crate::shared_types::AuthStage;
-use crate::wire_protocol::WireSerializable;
-use crate::wire_protocol::backend::BackendKeyDataFrame;
-use crate::wire_protocol::frontend::{MessageType, frames as fe_frames};
-use crate::wire_protocol_v2::utils::peek_frontend;
+use crate::wire_protocol::observers::password_message::PasswordMessageFrameObserver;
+use crate::wire_protocol::observers::startup::StartupFrameObserver;
+use crate::wire_protocol::types::MessageType;
+use crate::wire_protocol::utils::peek_frontend;
 use crate::{ErrorResponse, shared_types::BackendIdentity};
 
-use super::{peek::peek, sequence_tracker::SequenceTracker};
+use super::sequence_tracker::SequenceTracker;
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
@@ -31,6 +33,8 @@ pub struct FrontendConnection {
 
     #[allow(dead_code)]
     backend_identity: BackendIdentity,
+
+    backend_connection: Option<BackendConnection>,
 
     stage: AuthStage,
 
@@ -54,6 +58,7 @@ impl FrontendConnection {
             database: None,
             username: None,
             backend_identity: BackendIdentity::random(),
+            backend_connection: None,
             stage: AuthStage::Startup,
             inbox: BytesMut::with_capacity(SCRATCH_CAPACITY_HINT),
             inbox_tracker: SequenceTracker::new(),
@@ -85,7 +90,7 @@ impl FrontendConnection {
 
                     // 2) process all complete sequences in the inbox
                     while let Some(sequence) = self.pull_next_sequence() {
-                        self.process_sequence(sequence);
+                        self.process_sequence(sequence).await;
                     }
 
                     // 3) flush outbox to writer
@@ -131,10 +136,10 @@ impl FrontendConnection {
         Some(sequence)
     }
 
-    fn process_sequence(&mut self, seq_or_msg: BytesMut) {
+    async fn process_sequence(&mut self, seq_or_msg: BytesMut) {
         match self.stage {
             AuthStage::Startup => self.process_startup_message(seq_or_msg),
-            AuthStage::Authenticating => self.process_authenticating_message(seq_or_msg),
+            AuthStage::Authenticating => self.process_authenticating_message(seq_or_msg).await,
             AuthStage::Ready => self.process_ready_sequence(seq_or_msg),
         }
     }
@@ -157,16 +162,20 @@ impl FrontendConnection {
 
 impl FrontendConnection {
     fn process_startup_message(&mut self, message: BytesMut) {
-        let found = peek(AuthStage::Startup, &message[..]).unwrap();
+        let Some(found) = peek_frontend(AuthStage::Startup, &message[..]) else {
+            let err = ErrorResponse::protocol_violation("bad startup message");
+            self.batch_response(&err.to_bytes());
+            return;
+        };
 
         match found.message_type {
-            MessageType::SslRequest => {
+            MessageType::SSLRequest => {
                 // Not supporting TLSyet -> reply 'N' and stay in Startup
                 // Client will send real Startup next
                 self.batch_response(&Self::be_ssl_no());
             }
 
-            MessageType::GssEncRequest => {
+            MessageType::GSSENCRequest => {
                 // Not supporting GSS yet -> reply 'N' and stay in Startup.
                 // Client will send real Startup next
                 self.batch_response(&Self::be_ssl_no());
@@ -178,16 +187,28 @@ impl FrontendConnection {
             }
 
             MessageType::Startup => {
-                let Ok(startup_frame) = fe_frames::StartupFrame::from_bytes(&message) else {
-                    let err = ErrorResponse::internal_error("bad startup message");
+                let Ok(startup_frame) = StartupFrameObserver::new(&message) else {
+                    let err = ErrorResponse::protocol_violation("bad startup message");
                     self.batch_response(&err.to_bytes());
                     return;
                 };
 
                 self.stage = AuthStage::Authenticating;
 
-                self.username = Some(startup_frame.user.to_string());
-                self.database = Some(startup_frame.database.to_string());
+                let Some(username) = startup_frame.param("user") else {
+                    let err = ErrorResponse::protocol_violation("startup missing user");
+                    self.batch_response(&err.to_bytes());
+                    return;
+                };
+
+                let Some(database) = startup_frame.param("database") else {
+                    let err = ErrorResponse::protocol_violation("startup missing database");
+                    self.batch_response(&err.to_bytes());
+                    return;
+                };
+
+                self.username = Some(username.to_string());
+                self.database = Some(database.to_string());
 
                 self.batch_response(&Self::be_auth_cleartext());
             }
@@ -205,64 +226,83 @@ impl FrontendConnection {
 // ----- FrontendConnection: Process Authenticating Sequence -------------------
 
 impl FrontendConnection {
-    fn process_authenticating_message(&mut self, message: BytesMut) {
-        let Ok(frame) = fe_frames::PasswordMessageFrame::from_bytes(&message) else {
-            let error = ErrorResponse::internal_error("cannot parse password");
+    async fn process_authenticating_message(&mut self, message: BytesMut) {
+        let Ok(frame) = PasswordMessageFrameObserver::new(&message) else {
+            let error = ErrorResponse::protocol_violation("cannot parse password");
             self.batch_response(&error.to_bytes());
             return;
         };
 
-        let ok = self.authenticate(frame.password);
-        if !ok {
-            let error = ErrorResponse::internal_error("password authentication failed");
-            self.batch_response(&error.to_bytes());
-            return;
+        match self.authenticate(frame.password()).await {
+            Ok(_) => {
+                self.stage = AuthStage::Ready;
+
+                // AuthenticationOk
+                self.batch_response(&Self::be_auth_ok());
+
+                // ParameterStatus (keep it minimal but sane)
+                self.batch_response(&Self::be_param_status("server_encoding", "UTF8"));
+                self.batch_response(&Self::be_param_status("client_encoding", "UTF8"));
+
+                // BackendKeyData
+                self.batch_response(&Self::be_backend_key_data(self.backend_identity));
+
+                // ReadyForQuery (idle)
+                self.batch_response(&Self::be_ready(b'I'));
+            }
+            Err(e) => {
+                let error = ErrorResponse::internal_error(&e);
+                self.batch_response(&error.to_bytes());
+            }
         }
-
-        self.stage = AuthStage::Ready;
-
-        // AuthenticationOk
-        self.batch_response(&Self::be_auth_ok());
-
-        // ParameterStatus (keep it minimal but sane)
-        self.batch_response(&Self::be_param_status("server_encoding", "UTF8"));
-        self.batch_response(&Self::be_param_status("client_encoding", "UTF8"));
-
-        // BackendKeyData
-        let backend_key_data_frame = BackendKeyDataFrame::from(&self.backend_identity);
-        self.batch_response(&backend_key_data_frame.to_bytes_safe());
-
-        // ReadyForQuery (idle)
-        self.batch_response(&Self::be_ready(b'I'));
     }
 
-    fn authenticate(&mut self, supplied_password: &str) -> bool {
+    async fn authenticate(&mut self, supplied_password: &str) -> Result<(), String> {
         // Never happens
         let Some(username) = self.username.as_ref() else {
-            return false;
+            return Err("no username".to_string());
         };
 
         // Never happens
         let Some(database) = self.database.as_ref() else {
-            return false;
+            return Err("no database".to_string());
         };
 
         let users = UsersConfig::snapshot();
 
         let maybe_user = users.iter().find(|u| {
-            let matches_user = u.client_username == username.to_string();
-            let matches_database = u.database_name == database.to_string();
+            let matches_user = u.client_username == *username;
+            let matches_database = u.database_name == *database;
 
             matches_user && matches_database
         });
 
         let Some(user) = maybe_user else {
-            return false;
+            return Err("authentication failed".to_string());
         };
 
         let config_password = user.client_password.expose_secret();
 
-        config_password == supplied_password
+        if config_password != supplied_password {
+            return Err("authentication failed".to_string());
+        }
+
+        // Connect to backend
+        // For now we just pick the first shard. TODO: Logic to pick correct shard based on user/db/hashing
+        let shards = ShardsConfig::snapshot();
+        let Some(shard) = shards.first() else {
+            return Err("no database shards configured".to_string());
+        };
+
+        // TODO: Authenticate against the backend using shard.user and shard.password
+
+        let conn = BackendConnection::connect(&shard.host, shard.port)
+            .await
+            .map_err(|e| format!("failed to connect to backend: {}", e))?;
+
+        self.backend_connection = Some(conn);
+
+        Ok(())
     }
 }
 
@@ -324,6 +364,15 @@ impl FrontendConnection {
         b.put_u8(b'Z');
         b.put_u32(5);
         b.put_u8(status);
+        b.freeze()
+    }
+
+    fn be_backend_key_data(identity: BackendIdentity) -> Bytes {
+        let mut b = BytesMut::with_capacity(1 + 4 + 8);
+        b.put_u8(b'K');
+        b.put_u32(12);
+        b.put_i32(identity.process_id);
+        b.put_i32(identity.secret_key);
         b.freeze()
     }
 }

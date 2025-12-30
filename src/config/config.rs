@@ -1,15 +1,17 @@
 use parking_lot::RwLock;
 use std::{
     net::SocketAddr,
+    path::PathBuf,
     sync::{Arc, OnceLock},
 };
 
-use super::{cli::CliConfig, types::LogLevel, users::UsersConfig};
+use super::{shards::ShardsConfig, types::LogLevel, users::UsersConfig};
 
 // -----------------------------------------------------------------------------
 // ----- Global Singleton ------------------------------------------------------
 
-static ROOT_CONFIG: OnceLock<Arc<RwLock<Config>>> = OnceLock::new();
+static CONFIG_FILE_PATH: OnceLock<PathBuf> = OnceLock::new();
+static CONFIG: OnceLock<Arc<RwLock<Config>>> = OnceLock::new();
 
 // -----------------------------------------------------------------------------
 // ----- Config ----------------------------------------------------------------
@@ -19,6 +21,7 @@ pub struct Config {
     pub listen_addr: SocketAddr,
     pub log_level: LogLevel,
     pub users: &'static UsersConfig,
+    pub shards: &'static ShardsConfig,
 }
 
 // -----------------------------------------------------------------------------
@@ -26,16 +29,22 @@ pub struct Config {
 
 impl Config {
     /// Async because UsersConfig::init() is async (non-blocking IO).
-    pub async fn init() {
-        CliConfig::init();
-        UsersConfig::init().await;
+    pub async fn init(listen_addr: SocketAddr, log_level: LogLevel, config_path: PathBuf) {
+        CONFIG_FILE_PATH
+            .set(config_path)
+            .unwrap_or_else(|_| panic!("Config::init called twice"));
 
-        Self::load().await;
+        let path = config_path_handle();
+        UsersConfig::init(path).await;
+        ShardsConfig::init(path).await;
+
+        Self::load(listen_addr, log_level).await;
     }
 
     /// Pure in-memory reload. Call this after you've reloaded sub-configs.
     pub async fn reload() {
-        Self::load().await;
+        let current = Self::snapshot();
+        Self::load(current.listen_addr, current.log_level).await;
     }
 
     pub fn snapshot() -> Config {
@@ -47,31 +56,43 @@ impl Config {
 // ----- Config: Private -------------------------------------------------------
 
 impl Config {
-    async fn load() {
-        let cli = CliConfig::snapshot();
+    async fn load(listen_addr: SocketAddr, log_level: LogLevel) {
         let users = UsersConfig::handle();
+        let shards = ShardsConfig::handle();
 
-        UsersConfig::reload().await;
+        let path = config_path_handle();
+        UsersConfig::reload(path).await;
+        ShardsConfig::reload(path).await;
 
         let next = Config {
-            listen_addr: cli.listen_addr,
-            log_level: cli.log_level,
+            listen_addr,
+            log_level,
             users,
+            shards,
         };
 
-        if let Some(handle) = ROOT_CONFIG.get() {
+        if let Some(handle) = CONFIG.get() {
             *handle.write() = next;
         } else {
-            let _ = ROOT_CONFIG.set(Arc::new(RwLock::new(next)));
+            let _ = CONFIG.set(Arc::new(RwLock::new(next)));
         }
     }
 
     fn handle() -> Arc<RwLock<Config>> {
-        ROOT_CONFIG
+        CONFIG
             .get()
             .expect("Config not initialized; call Config::init().await first")
             .clone()
     }
+}
+
+// -----------------------------------------------------------------------------
+// ----- Private Helpers -------------------------------------------------------
+
+fn config_path_handle() -> &'static PathBuf {
+    CONFIG_FILE_PATH
+        .get()
+        .expect("config path not initialized; call Config::init() first")
 }
 
 // -----------------------------------------------------------------------------

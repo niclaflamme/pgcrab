@@ -7,8 +7,6 @@ use thiserror::Error;
 use tokio::fs;
 use tracing::error;
 
-use super::cli::CliConfig;
-
 // -----------------------------------------------------------------------------
 // ----- Singleton -------------------------------------------------------------
 
@@ -27,10 +25,8 @@ pub struct UsersConfig {
 
 impl UsersConfig {
     /// Init: panic on any error. Do not continue with a bad state.
-    pub async fn init() {
-        let path = CliConfig::snapshot().users_file_location;
-
-        let cfg = Self::from_file_async(&path)
+    pub async fn init(path: &Path) {
+        let cfg = Self::from_file_async(path)
             .await
             .unwrap_or_else(|e| panic!("failed to load users config from {:?}: {e}", path));
 
@@ -40,10 +36,8 @@ impl UsersConfig {
     }
 
     /// Reload: on error, DO NOT swap; keep current map and log.
-    pub async fn reload() {
-        let path = CliConfig::snapshot().users_file_location;
-
-        let new_cfg = match Self::from_file_async(&path).await {
+    pub async fn reload(path: &Path) {
+        let new_cfg = match Self::from_file_async(path).await {
             Ok(cfg) => cfg,
             Err(e) => {
                 error!(

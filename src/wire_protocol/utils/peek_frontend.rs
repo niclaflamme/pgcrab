@@ -1,4 +1,4 @@
-use crate::{shared_types::AuthStage, wire_protocol_v2::types::MessageType};
+use crate::{shared_types::AuthStage, wire_protocol::types::MessageType};
 
 use super::super::observers::{
     bind::BindFrameObserver, cancel_request::CancelRequestFrameObserver, close::CloseFrameObserver,
