@@ -5,19 +5,20 @@ use tokio::select;
 use crate::frontend::buffers::FrontendBuffers;
 use crate::frontend::context::FrontendContext;
 use crate::frontend::handlers;
+use crate::frontend::transport::FrontendTransport;
 use crate::shared_types::AuthStage;
+use crate::tls;
 
 // -----------------------------------------------------------------------------
 // ----- FrontendConnection ----------------------------------------------------
 
 /// Drives the client connection through the Startup -> Authenticating -> Ready
 /// stages, delegating protocol handling to stage-specific handlers.
-#[derive(Debug)]
 pub struct FrontendConnection {
     context: FrontendContext,
     buffers: FrontendBuffers,
-    reader: tokio::net::tcp::OwnedReadHalf,
-    writer: tokio::net::tcp::OwnedWriteHalf,
+    transport: FrontendTransport,
+    tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
 }
 
 // -----------------------------------------------------------------------------
@@ -25,13 +26,11 @@ pub struct FrontendConnection {
 
 impl FrontendConnection {
     pub fn new(stream: TcpStream) -> Self {
-        let (reader, writer) = stream.into_split();
-
         Self {
             context: FrontendContext::new(),
             buffers: FrontendBuffers::new(),
-            reader,
-            writer,
+            transport: FrontendTransport::new(stream),
+            tls_acceptor: tls::acceptor(),
         }
     }
 }
@@ -44,7 +43,7 @@ impl FrontendConnection {
         loop {
             select! {
                 read_res = async {
-                    self.buffers.read_from(&mut self.reader).await
+                    self.buffers.read_from(&mut self.transport).await
                 } => {
                     let n = read_res?;
                     if n == 0 { break; }
@@ -54,14 +53,26 @@ impl FrontendConnection {
 
                     while let Some(sequence) = self.buffers.pull_next_sequence(self.context.stage) {
                         self.process_sequence(sequence).await;
+
                         if self.context.should_close() {
+                            break;
+                        }
+
+                        if self.context.wants_tls_upgrade() {
                             break;
                         }
                     }
 
-                    self.buffers.flush_to(&mut self.writer).await?;
+                    self.buffers.flush_to(&mut self.transport).await?;
+
                     if self.context.should_close() {
                         break;
+                    }
+
+                    if self.context.take_tls_upgrade() {
+                        if let Some(acceptor) = self.tls_acceptor.as_ref() {
+                            self.transport.upgrade_to_tls(acceptor).await?;
+                        }
                     }
                 }
             }
@@ -77,9 +88,12 @@ impl FrontendConnection {
 impl FrontendConnection {
     async fn process_sequence(&mut self, seq_or_msg: BytesMut) {
         match self.context.stage {
-            AuthStage::Startup => {
-                handlers::startup::handle_startup(&mut self.context, &mut self.buffers, seq_or_msg)
-            }
+            AuthStage::Startup => handlers::startup::handle_startup(
+                &mut self.context,
+                &mut self.buffers,
+                seq_or_msg,
+                self.tls_acceptor.is_some(),
+            ),
             AuthStage::Authenticating => {
                 handlers::authenticating::handle_authenticating(
                     &mut self.context,

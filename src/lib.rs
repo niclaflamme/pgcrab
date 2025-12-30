@@ -5,6 +5,7 @@ pub mod frontend;
 pub mod gateway;
 pub mod net;
 pub mod shared_types;
+pub mod tls;
 pub mod wire_protocol;
 
 pub use config::Config;

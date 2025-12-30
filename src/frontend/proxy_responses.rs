@@ -12,6 +12,10 @@ pub(crate) fn ssl_no() -> Bytes {
     Bytes::from_static(b"N")
 }
 
+pub(crate) fn ssl_yes() -> Bytes {
+    Bytes::from_static(b"S")
+}
+
 pub(crate) fn auth_cleartext() -> Bytes {
     let mut b = BytesMut::with_capacity(1 + 4 + 4);
     b.put_u8(b'R');

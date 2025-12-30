@@ -1,7 +1,5 @@
 use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-
+use crate::frontend::transport::FrontendTransport;
 use crate::frontend::sequence_tracker::SequenceTracker;
 use crate::shared_types::AuthStage;
 use crate::wire_protocol::utils::peek_frontend;
@@ -32,10 +30,10 @@ impl FrontendBuffers {
 
     pub(crate) async fn read_from(
         &mut self,
-        reader: &mut OwnedReadHalf,
+        transport: &mut FrontendTransport,
     ) -> std::io::Result<usize> {
         self.inbox.reserve(SCRATCH_CAPACITY_HINT);
-        reader.read_buf(&mut self.inbox).await
+        transport.read_buf(&mut self.inbox).await
     }
 
     pub(crate) fn track_new_inbox_frames(&mut self, stage: AuthStage) {
@@ -71,10 +69,10 @@ impl FrontendBuffers {
 
     pub(crate) async fn flush_to(
         &mut self,
-        writer: &mut OwnedWriteHalf,
+        transport: &mut FrontendTransport,
     ) -> std::io::Result<()> {
         if !self.outbox.is_empty() {
-            writer.write_all_buf(&mut self.outbox).await?;
+            transport.write_all_buf(&mut self.outbox).await?;
         }
 
         Ok(())

@@ -17,6 +17,7 @@ pub(crate) fn handle_startup(
     context: &mut FrontendContext,
     buffers: &mut FrontendBuffers,
     message: BytesMut,
+    tls_available: bool,
 ) {
     let Some(found) = peek_frontend(AuthStage::Startup, &message[..]) else {
         let err = ErrorResponse::protocol_violation("bad startup message");
@@ -27,9 +28,12 @@ pub(crate) fn handle_startup(
 
     match found.message_type {
         MessageType::SSLRequest => {
-            // Not supporting TLS yet -> reply 'N' and stay in Startup.
-            // Client will send real Startup next.
-            buffers.queue_response(&responses::ssl_no());
+            if tls_available {
+                buffers.queue_response(&responses::ssl_yes());
+                context.request_tls_upgrade();
+            } else {
+                buffers.queue_response(&responses::ssl_no());
+            }
         }
 
         MessageType::GSSENCRequest => {

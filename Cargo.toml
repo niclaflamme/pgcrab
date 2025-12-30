@@ -26,9 +26,11 @@ tokio = { version = "1.38", features = [
     "sync",            # mpsc, oneshot, Mutex, Semaphore
     "time",            # sleep, delay_queue, etc.
 ] }
+tokio-rustls = "0.26.1"
 toml = "0.9.5"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+rustls-pemfile = "2.2.0"
 
 [dev-dependencies]
 tokio-postgres = "0.7.13"

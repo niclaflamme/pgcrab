@@ -15,6 +15,7 @@ pub(crate) struct FrontendContext {
     pub(crate) gateway_session: Option<GatewaySession>,
     pub(crate) stage: AuthStage,
     close_after_flush: bool,
+    upgrade_to_tls: bool,
 }
 
 impl FrontendContext {
@@ -26,6 +27,7 @@ impl FrontendContext {
             gateway_session: None,
             stage: AuthStage::Startup,
             close_after_flush: false,
+            upgrade_to_tls: false,
         }
     }
 
@@ -35,6 +37,18 @@ impl FrontendContext {
 
     pub(crate) fn should_close(&self) -> bool {
         self.close_after_flush
+    }
+
+    pub(crate) fn request_tls_upgrade(&mut self) {
+        self.upgrade_to_tls = true;
+    }
+
+    pub(crate) fn wants_tls_upgrade(&self) -> bool {
+        self.upgrade_to_tls
+    }
+
+    pub(crate) fn take_tls_upgrade(&mut self) -> bool {
+        std::mem::take(&mut self.upgrade_to_tls)
     }
 
     pub(crate) async fn authenticate(&mut self, supplied_password: &str) -> Result<(), String> {
