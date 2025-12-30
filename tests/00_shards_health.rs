@@ -10,10 +10,6 @@ async fn shards_are_reachable() {
     );
     for user in cfg.users {
         assert!(!user.username.trim().is_empty(), "user.username is empty");
-        assert!(
-            !user.database_name.trim().is_empty(),
-            "user.database_name is empty"
-        );
         assert!(!user.password.is_empty(), "user.password is empty");
     }
 }

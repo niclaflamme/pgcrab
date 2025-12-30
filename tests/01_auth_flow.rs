@@ -29,7 +29,7 @@ async fn auth_flow_accepts_valid_user() {
     for user in users {
         let conn_str = format!(
             "host={} port={} user={} password={} dbname={}",
-            shard.host, port, user.username, user.password, user.database_name
+            shard.host, port, user.username, user.password, shard.name
         );
 
         let (client, connection) = tokio_postgres::connect(&conn_str, NoTls)

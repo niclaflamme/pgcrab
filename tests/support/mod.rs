@@ -34,12 +34,12 @@ async fn check_shards() -> Result<(), String> {
     for shard in cfg.shards {
         let conn_str = format!(
             "host={} port={} user={} password={} dbname={}",
-            shard.host, shard.port, shard.user, shard.password, shard.database_name
+            shard.host, shard.port, shard.user, shard.password, shard.name
         );
 
         let (client, connection) = tokio_postgres::connect(&conn_str, NoTls)
             .await
-            .map_err(|e| format!("shard {} connect failed: {e}", shard.shard_name))?;
+            .map_err(|e| format!("shard {} connect failed: {e}", shard.name))?;
 
         tokio::spawn(async move {
             if let Err(e) = connection.await {
@@ -50,16 +50,16 @@ async fn check_shards() -> Result<(), String> {
         let row = client
             .query_one("select 1", &[])
             .await
-            .map_err(|e| format!("shard {} query failed: {e}", shard.shard_name))?;
+            .map_err(|e| format!("shard {} query failed: {e}", shard.name))?;
 
         let value: i32 = row
             .try_get(0)
-            .map_err(|e| format!("shard {} bad result: {e}", shard.shard_name))?;
+            .map_err(|e| format!("shard {} bad result: {e}", shard.name))?;
 
         if value != 1 {
             return Err(format!(
                 "shard {} unexpected result: got {value}, want 1",
-                shard.shard_name
+                shard.name
             ));
         }
     }
@@ -85,19 +85,16 @@ pub struct ConfigFile {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ShardEntry {
-    pub shard_name: String,
+    pub name: String,
     pub host: String,
     pub port: u16,
     pub user: String,
     pub password: String,
-    pub database_name: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct UserEntry {
     #[serde(alias = "name")]
     pub username: String,
-    #[serde(alias = "database")]
-    pub database_name: String,
     pub password: String,
 }

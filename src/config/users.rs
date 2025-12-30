@@ -72,11 +72,10 @@ impl UsersConfig {
 impl UsersConfig {
     pub fn authenticate(
         &self,
-        database_name: &str,
         client_username: &str,
         client_password: &str,
     ) -> Result<UserRecord, UsersError> {
-        let key = UserKey::new(client_username, database_name);
+        let key = UserKey::new(client_username);
 
         let guard = self.inner.read();
         let user = guard
@@ -84,7 +83,6 @@ impl UsersConfig {
             .get(&key)
             .ok_or_else(|| UsersError::UnknownUser {
                 username: client_username.to_string(),
-                database_name: database_name.to_string(),
             })?;
 
         if user.client_password.expose_secret() != client_password {
@@ -130,7 +128,6 @@ impl UsersConfig {
 
             let record = UserRecord {
                 client_username: user.username.clone(),
-                database_name: user.database_name.clone(),
 
                 client_password: SecretString::new(user.password.into_boxed_str()),
                 server_username,
@@ -141,11 +138,10 @@ impl UsersConfig {
                 statement_timeout: user.statement_timeout,
             };
 
-            let key = UserKey::new(&record.client_username, &record.database_name);
+            let key = UserKey::new(&record.client_username);
             if by_key.insert(key, record).is_some() {
                 return Err(UsersError::DuplicateUser {
                     username: user.username,
-                    database_name: user.database_name,
                 });
             }
         }
@@ -167,14 +163,12 @@ struct UsersMap {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct UserKey {
     client_username: String,
-    database_name: String,
 }
 
 impl UserKey {
-    fn new(client_username: &str, database_name: &str) -> Self {
+    fn new(client_username: &str) -> Self {
         Self {
             client_username: client_username.to_string(),
-            database_name: database_name.to_string(),
         }
     }
 }
@@ -203,9 +197,6 @@ struct UsersFileEntry {
     #[serde(alias = "name")]
     username: String,
 
-    #[serde(alias = "database")]
-    database_name: String,
-
     password: String,
 
     #[serde(default)]
@@ -230,7 +221,6 @@ struct UsersFileEntry {
 #[derive(Debug, Clone)]
 pub struct UserRecord {
     pub client_username: String,
-    pub database_name: String,
 
     pub client_password: SecretString,
     pub server_username: String,
@@ -249,9 +239,6 @@ fn normalize_defaults(_u: &mut UsersFileEntry) {}
 fn validate(u: &UsersFileEntry) -> Result<(), UsersError> {
     if u.username.trim().is_empty() {
         return Err(UsersError::InvalidField("username".into()));
-    }
-    if u.database_name.trim().is_empty() {
-        return Err(UsersError::InvalidField("database_name".into()));
     }
     if u.password.is_empty() {
         return Err(UsersError::InvalidField("password".into()));
@@ -326,17 +313,11 @@ pub enum UsersError {
     #[error("users config is empty")]
     EmptyConfig,
 
-    #[error("duplicate [[users]] entry for user '{username}' and database '{database_name}'")]
-    DuplicateUser {
-        username: String,
-        database_name: String,
-    },
+    #[error("duplicate [[users]] entry for user '{username}'")]
+    DuplicateUser { username: String },
 
-    #[error("unknown user '{username}' for database '{database_name}'")]
-    UnknownUser {
-        username: String,
-        database_name: String,
-    },
+    #[error("unknown user '{username}'")]
+    UnknownUser { username: String },
 
     #[error("invalid or missing field '{0}'")]
     InvalidField(String),
@@ -374,7 +355,6 @@ mod tests {
         let toml = r#"
             [[users]]
             username = "alice"
-            database_name = "prod"
             password = "hunter2"
             pool_size = 64
             pooler_mode = "transaction"
@@ -382,7 +362,6 @@ mod tests {
 
             [[users]]
             username = "bob"
-            database_name = "prod"
             password = "opensesame"
             server_username = "pgapp"
             server_password = "server-secret"
@@ -393,13 +372,13 @@ mod tests {
         let tmp = write_tmp(toml);
         let users = UsersConfig::from_file_async(tmp.path()).await.unwrap();
 
-        let rec = users.authenticate("prod", "alice", "hunter2").unwrap();
+        let rec = users.authenticate("alice", "hunter2").unwrap();
         assert_eq!(rec.server_username, "alice");
         assert_eq!(rec.pool_size, Some(64));
         assert_eq!(rec.pooler_mode, Some(PoolerMode::Transaction));
         assert_eq!(rec.statement_timeout, Some(Duration::from_millis(30_000)));
 
-        let rec = users.authenticate("prod", "bob", "opensesame").unwrap();
+        let rec = users.authenticate("bob", "opensesame").unwrap();
         assert_eq!(rec.server_username, "pgapp");
         assert_eq!(rec.server_password.expose_secret(), "server-secret");
         assert_eq!(rec.pooler_mode, Some(PoolerMode::Session));
@@ -410,7 +389,6 @@ mod tests {
     async fn backward_compat_aliases_still_work() {
         let toml = r#"
             [[users]]
-            database = "oldprod"
             name = "legacy"
             password = "password"
             server_user = "legacy_backend"
@@ -419,7 +397,7 @@ mod tests {
         let tmp = write_tmp(toml);
         let users = UsersConfig::from_file_async(tmp.path()).await.unwrap();
 
-        let rec = users.authenticate("oldprod", "legacy", "password").unwrap();
+        let rec = users.authenticate("legacy", "password").unwrap();
         assert_eq!(rec.server_username, "legacy_backend");
     }
 
@@ -427,7 +405,6 @@ mod tests {
     async fn bad_password_and_unknown_user() {
         let toml = r#"
             [[users]]
-            database_name = "prod"
             username = "alice"
             password = "password"
         "#;
@@ -435,18 +412,12 @@ mod tests {
         let tmp = write_tmp(toml);
         let users = UsersConfig::from_file_async(tmp.path()).await.unwrap();
 
-        let err = users.authenticate("prod", "alice", "nope").unwrap_err();
+        let err = users.authenticate("alice", "nope").unwrap_err();
         assert!(matches!(err, UsersError::BadPassword));
 
-        let err = users.authenticate("prod", "steeve", "nope").unwrap_err();
+        let err = users.authenticate("steeve", "nope").unwrap_err();
         match err {
-            UsersError::UnknownUser {
-                username,
-                database_name,
-            } => {
-                assert_eq!(database_name, "prod");
-                assert_eq!(username, "steeve");
-            }
+            UsersError::UnknownUser { username } => assert_eq!(username, "steeve"),
             _ => panic!("expected UnknownUser"),
         }
     }

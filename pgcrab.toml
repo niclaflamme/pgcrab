@@ -1,12 +1,24 @@
 [[shards]]
-shard_name = "shard-0"
 host = "127.0.0.1"
 port = 5432
+name = "pgcrab_shard_1"
 user = "mr_krabs"
-password = "password"
-database_name = "pgcrab"
+password = "i_love_money"
+
+[[shards]]
+host = "127.0.0.1"
+port = 5432
+name = "pgcrab_shard_2"
+user = "mr_krabs"
+password = "i_love_money"
+
+[[shards]]
+host = "127.0.0.1"
+port = 5432
+name = "pgcrab_shard_3"
+user = "mr_krabs"
+password = "i_love_money"
 
 [[users]]
-database_name = "pgcrab"
 username = "pgcrab"
 password = "pgcrab"

@@ -1,1 +1,5 @@
-
+- Add `scripts/setup-db.sh` to provision local shard databases via `psql`.
+- Script preflight: verify `127.0.0.1:5432` is reachable with `postgres:postgres`; if not, print a clear requirement and exit non-zero.
+- Create three databases: `pgcrab_shard_1`, `pgcrab_shard_2`, `pgcrab_shard_3`.
+- Ensure role `mr_krabs` exists with password `i_love_money` and owns each shard DB.
+- Add `make setup-db` to run the script.

@@ -263,18 +263,11 @@ impl FrontendConnection {
         };
 
         // Never happens
-        let Some(database) = self.database.as_ref() else {
-            return Err("no database".to_string());
-        };
-
         let users = UsersConfig::snapshot();
 
-        let maybe_user = users.iter().find(|u| {
-            let matches_user = u.client_username == *username;
-            let matches_database = u.database_name == *database;
-
-            matches_user && matches_database
-        });
+        let maybe_user = users
+            .iter()
+            .find(|u| u.client_username == *username);
 
         let Some(user) = maybe_user else {
             return Err("authentication failed".to_string());

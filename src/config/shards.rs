@@ -89,17 +89,16 @@ impl ShardsConfig {
 
         for shard in doc.shards.drain(..) {
             let record = ShardRecord {
-                shard_name: shard.shard_name.clone(),
+                shard_name: shard.name.clone(),
                 host: shard.host,
                 port: shard.port,
                 user: shard.user,
                 password: SecretString::new(shard.password.into_boxed_str()),
-                database_name: shard.database_name,
             };
 
             if by_name.insert(record.shard_name.clone(), record).is_some() {
                 return Err(ShardsError::DuplicateShard {
-                    name: shard.shard_name,
+                    name: shard.name,
                 });
             }
         }
@@ -129,12 +128,11 @@ struct ShardsFile {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ShardFileEntry {
-    shard_name: String,
+    name: String,
     host: String,
     port: u16,
     user: String,
     password: String,
-    database_name: String,
 }
 
 // -----------------------------------------------------------------------------
@@ -147,7 +145,6 @@ pub struct ShardRecord {
     pub port: u16,
     pub user: String,
     pub password: SecretString,
-    pub database_name: String,
 }
 
 impl ShardRecord {
