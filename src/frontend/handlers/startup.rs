@@ -37,9 +37,9 @@ pub(crate) fn handle_startup(
         }
 
         MessageType::GSSENCRequest => {
-            // Not supporting GSS yet -> reply 'N' and stay in Startup.
+            // Not supporting GSS encryption -> reply 'N' and stay in Startup.
             // Client will send real Startup next.
-            buffers.queue_response(&responses::ssl_no());
+            buffers.queue_response(&responses::gssenc_no());
         }
 
         MessageType::CancelRequest => {

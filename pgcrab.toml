@@ -4,6 +4,8 @@ port = 5432
 name = "pgcrab_shard_1"
 user = "mr_krabs"
 password = "i_love_money"
+min_connections = 5
+max_connections = 20
 
 [[shards]]
 host = "127.0.0.1"
