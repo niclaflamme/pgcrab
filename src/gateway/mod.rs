@@ -1,2 +1,5 @@
-pub mod backend_connection;
-pub use backend_connection::BackendConnection;
+pub mod session;
+
+pub use session::GatewaySession;
+
+// Gateway orchestration module; keep protocol-specific code in frontend/backend.

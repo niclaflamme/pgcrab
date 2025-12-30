@@ -8,7 +8,7 @@ use tokio::{
 
 use crate::config::shards::ShardsConfig;
 use crate::config::users::UsersConfig;
-use crate::gateway::BackendConnection;
+use crate::gateway::GatewaySession;
 use crate::shared_types::AuthStage;
 use crate::wire_protocol::observers::password_message::PasswordMessageFrameObserver;
 use crate::wire_protocol::observers::startup::StartupFrameObserver;
@@ -34,7 +34,7 @@ pub struct FrontendConnection {
     #[allow(dead_code)]
     backend_identity: BackendIdentity,
 
-    backend_connection: Option<BackendConnection>,
+    gateway_session: Option<GatewaySession>,
 
     stage: AuthStage,
 
@@ -58,7 +58,7 @@ impl FrontendConnection {
             database: None,
             username: None,
             backend_identity: BackendIdentity::random(),
-            backend_connection: None,
+            gateway_session: None,
             stage: AuthStage::Startup,
             inbox: BytesMut::with_capacity(SCRATCH_CAPACITY_HINT),
             inbox_tracker: SequenceTracker::new(),
@@ -296,11 +296,8 @@ impl FrontendConnection {
 
         // TODO: Authenticate against the backend using shard.user and shard.password
 
-        let conn = BackendConnection::connect(&shard.host, shard.port)
-            .await
-            .map_err(|e| format!("failed to connect to backend: {}", e))?;
-
-        self.backend_connection = Some(conn);
+        let session = GatewaySession::connect_to_shard(shard).await?;
+        self.gateway_session = Some(session);
 
         Ok(())
     }
