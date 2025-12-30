@@ -7,9 +7,9 @@ use std::{
 use tokio::net::{TcpListener, TcpSocket};
 use tokio::signal;
 use tracing::{error, info};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
-use pgcrab::{config::types::LogLevel, Config, FrontendConnection};
+use pgcrab::{Config, FrontendConnection, config::types::LogLevel};
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
