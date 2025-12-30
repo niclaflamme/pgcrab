@@ -6,7 +6,7 @@ use crate::frontend::context::FrontendContext;
 use crate::frontend::proxy_responses as responses;
 use crate::shared_types::AuthStage;
 use crate::wire_protocol::observers::cancel_request::CancelRequestFrameObserver;
-use crate::wire_protocol::observers::startup::StartupFrameObserver;
+use crate::wire_protocol::observers::startup::{NewStartupObserverError, StartupFrameObserver};
 use crate::wire_protocol::types::MessageType;
 use crate::wire_protocol::utils::peek_frontend;
 
@@ -39,18 +39,32 @@ pub(crate) fn handle_startup(
         }
 
         MessageType::CancelRequest => {
-            let _ = CancelRequestFrameObserver::new(&message);
-            // TODO: Route cancel request using pid/secret.
-            // NOTE: No response is expected by the client.
+            if let Ok(frame) = CancelRequestFrameObserver::new(&message) {
+                let _pid = frame.pid();
+                let _secret = frame.secret();
+            }
+            // CancelRequest expects no response; close after reading the frame.
             context.request_close();
         }
 
         MessageType::Startup => {
-            let Ok(startup_frame) = StartupFrameObserver::new(&message) else {
-                let err = ErrorResponse::protocol_violation("bad startup message");
-                buffers.queue_response(&err.to_bytes());
-                context.request_close();
-                return;
+            let startup_frame = match StartupFrameObserver::new(&message) {
+                Ok(frame) => frame,
+                Err(NewStartupObserverError::UnexpectedVersion(version)) => {
+                    let err = ErrorResponse::protocol_violation(
+                        "unsupported startup protocol version",
+                    )
+                    .with_detail(format!("version: {}", version));
+                    buffers.queue_response(&err.to_bytes());
+                    context.request_close();
+                    return;
+                }
+                Err(_) => {
+                    let err = ErrorResponse::protocol_violation("bad startup message");
+                    buffers.queue_response(&err.to_bytes());
+                    context.request_close();
+                    return;
+                }
             };
 
             let Some(username) = startup_frame.param("user").filter(|v| !v.is_empty()) else {
