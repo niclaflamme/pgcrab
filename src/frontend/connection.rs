@@ -11,7 +11,7 @@ use crate::gateway::GatewayPools;
 use crate::frontend::proxy_responses as responses;
 use crate::shared_types::ReadyStatus;
 use crate::shared_types::AuthStage;
-use crate::wire_protocol::utils::peek_backend;
+use crate::wire::utils::peek_backend;
 use crate::ErrorResponse;
 use crate::tls;
 

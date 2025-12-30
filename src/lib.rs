@@ -4,10 +4,10 @@ pub mod errors;
 pub mod frontend;
 pub mod gateway;
 pub mod net;
-pub mod query_parser;
+pub mod parser;
 pub mod shared_types;
 pub mod tls;
-pub mod wire_protocol;
+pub mod wire;
 
 pub use config::Config;
 pub use errors::ErrorResponse;

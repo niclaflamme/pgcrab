@@ -2,7 +2,7 @@ use bytes::{Bytes, BytesMut};
 use crate::frontend::transport::FrontendTransport;
 use crate::frontend::sequence_tracker::SequenceTracker;
 use crate::shared_types::AuthStage;
-use crate::wire_protocol::utils::peek_frontend;
+use crate::wire::utils::peek_frontend;
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------

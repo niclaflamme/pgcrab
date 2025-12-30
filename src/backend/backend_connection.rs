@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::wire_protocol::utils::peek_backend;
+use crate::wire::utils::peek_backend;
 
 #[derive(Debug)]
 pub struct BackendConnection {

@@ -1,4 +1,4 @@
-# Plan: SQL query parser (early wins first)
+# Plan: SQL parser (early wins first)
 
 ## Early wins (now)
 - Intercept frontend `Query`/`Parse` messages.
@@ -7,14 +7,14 @@
 - Treat parse errors as non-fatal: log and keep forwarding.
 
 ## Minimal data structures
-- `query_parser::parse(query: &str) -> Result<ParsedQuery, ParseError>`
+- `parser::parse(query: &str) -> Result<ParsedQuery, ParseError>`
 - `ParsedQuery`:
   - `statement_type` (Select/Insert/Update/Delete/Other)
   - `tables` (qualified names when available)
 
 ## Implementation steps
 1. Pick a parser crate and add it as a dependency (start with `pg_query` or `sqlparser`).
-2. Create `src/query_parser/mod.rs` with a small wrapper:
+2. Create `src/parser/mod.rs` with a small wrapper:
    - Parse SQL text to AST.
    - Accept only the first statement.
 3. Wire parsing into `frontend` ready handling:

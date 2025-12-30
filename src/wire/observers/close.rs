@@ -1,7 +1,7 @@
 use memchr::memchr;
 use std::{fmt, str};
 
-use crate::wire_protocol::utils::{TaggedFrameError, parse_tagged_frame, peek_tagged_frame};
+use crate::wire::utils::{TaggedFrameError, parse_tagged_frame, peek_tagged_frame};
 
 // -----------------------------------------------------------------------------
 // ----- CloseFrameObserver ----------------------------------------------------

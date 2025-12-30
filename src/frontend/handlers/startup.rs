@@ -5,10 +5,10 @@ use crate::frontend::buffers::FrontendBuffers;
 use crate::frontend::context::FrontendContext;
 use crate::frontend::proxy_responses as responses;
 use crate::shared_types::AuthStage;
-use crate::wire_protocol::observers::cancel_request::CancelRequestFrameObserver;
-use crate::wire_protocol::observers::startup::{NewStartupObserverError, StartupFrameObserver};
-use crate::wire_protocol::types::MessageType;
-use crate::wire_protocol::utils::peek_frontend;
+use crate::wire::observers::cancel_request::CancelRequestFrameObserver;
+use crate::wire::observers::startup::{NewStartupObserverError, StartupFrameObserver};
+use crate::wire::types::MessageType;
+use crate::wire::utils::peek_frontend;
 
 // -----------------------------------------------------------------------------
 // ----- Startup Handler -------------------------------------------------------

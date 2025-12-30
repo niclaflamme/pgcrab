@@ -6,7 +6,7 @@ use crate::frontend::context::FrontendContext;
 use crate::frontend::proxy_responses as responses;
 use crate::shared_types::AuthStage;
 use crate::shared_types::ReadyStatus;
-use crate::wire_protocol::observers::password_message::PasswordMessageFrameObserver;
+use crate::wire::observers::password_message::PasswordMessageFrameObserver;
 
 // -----------------------------------------------------------------------------
 // ----- Authenticating Handler -----------------------------------------------

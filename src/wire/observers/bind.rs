@@ -1,9 +1,9 @@
-// src/wire_protocol/frontend/frames/bind_observer.rs
+// src/wire/frontend/frames/bind_observer.rs
 
 use memchr::memchr;
 use std::{fmt, str};
 
-use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+use crate::wire::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
 
 // -----------------------------------------------------------------------------
 // ----- BindFrameObserver -----------------------------------------------------

@@ -1,6 +1,6 @@
 use std::{error::Error as StdError, fmt};
 
-use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+use crate::wire::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
 
 // -----------------------------------------------------------------------------
 // ----- SASLResponseFrameObserver ---------------------------------------------

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::shared_types::AuthStage;
-use crate::wire_protocol::types::MessageType;
+use crate::wire::types::MessageType;
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------

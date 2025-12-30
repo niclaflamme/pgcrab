@@ -20,7 +20,7 @@ simple, fast pooler; query-aware routing comes later.
 - Transparent query forwarding (simple and extended protocol sequences).
 - Transaction-style pooling: backend returned to pool on `ReadyForQuery`.
 - Cleartext client auth against `[[users]]` in config.
-- Query parser scaffolding (AST parsing module) ready for routing work.
+- Parser scaffolding (AST parsing module) ready for routing work.
 
 ## How it works
 - Client connects to PgCrab and authenticates.

@@ -1,4 +1,4 @@
-// src/wire_protocol/frontend/frames/cancel_request.rs
+// src/wire/frontend/frames/cancel_request.rs
 use std::{error::Error as StdError, fmt};
 
 // -----------------------------------------------------------------------------

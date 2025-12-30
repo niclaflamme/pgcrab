@@ -1,4 +1,4 @@
-// src/wire_protocol/frontend/frames/gssenc_request.rs
+// src/wire/frontend/frames/gssenc_request.rs
 use std::{error::Error as StdError, fmt};
 
 // -----------------------------------------------------------------------------
