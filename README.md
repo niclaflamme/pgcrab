@@ -47,6 +47,11 @@ max_connections = 20
 [[users]]
 username = "pgcrab"
 password = "pgcrab"
+
+[[users]]
+username = "admin"
+password = "bigboss"
+admin = true
 ```
 
 Notes:
@@ -70,6 +75,14 @@ cargo run
 ## Connect
 ```bash
 psql "host=127.0.0.1 port=6432 user=pgcrab password=pgcrab dbname=pgcrab_shard_1"
+```
+
+## Admin Queries
+Admin users can run PgCrab-specific SQL that returns normal Postgres wire
+responses.
+
+```sql
+SHOW PGCRAB ANALYTICS;
 ```
 
 ## Tests
