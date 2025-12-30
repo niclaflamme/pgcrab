@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use tracing::debug;
 
 use crate::ErrorResponse;
+use crate::admin;
 use crate::frontend::buffers::FrontendBuffers;
 use crate::frontend::context::{FrontendContext, PendingParse, PreparedStatement};
 use crate::frontend::proxy_responses as responses;
@@ -27,6 +28,10 @@ pub(crate) async fn handle_ready(
     sequence: BytesMut,
     pools: &GatewayPools,
 ) {
+    if context.is_admin && try_handle_admin_sequence(buffers, &sequence) {
+        return;
+    }
+
     if context.gateway_session.is_none() {
         let Some(pool) = pools.random_pool() else {
             let err = ErrorResponse::internal_error("no backend shards available");
@@ -64,6 +69,34 @@ pub(crate) async fn handle_ready(
     }
 
     context.gateway_session = Some(session);
+}
+
+fn try_handle_admin_sequence(buffers: &mut FrontendBuffers, sequence: &[u8]) -> bool {
+    let Some(peek) = peek_frontend(AuthStage::Ready, sequence) else {
+        return false;
+    };
+
+    if peek.len != sequence.len() || peek.message_type != MessageType::Query {
+        return false;
+    }
+
+    let observer = match QueryFrameObserver::new(sequence) {
+        Ok(observer) => observer,
+        Err(err) => {
+            debug!(error = %err, "failed to decode Query frame");
+            return false;
+        }
+    };
+
+    let Some(command) = admin::parse_admin_command(observer.query()) else {
+        return false;
+    };
+
+    for response in admin::command_responses(command) {
+        buffers.queue_response(&response);
+    }
+    buffers.queue_response(&responses::ready_with_status(ReadyStatus::Idle));
+    true
 }
 
 fn prepare_sequence(

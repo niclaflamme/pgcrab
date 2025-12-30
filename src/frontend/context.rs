@@ -27,6 +27,7 @@ pub(crate) struct FrontendContext {
     pub(crate) backend_identity: BackendIdentity,
     pub(crate) gateway_session: Option<GatewaySession>,
     pub(crate) stage: AuthStage,
+    pub(crate) is_admin: bool,
     pub(crate) prepared_statements: HashMap<String, PreparedStatement>,
     pub(crate) pending_parses: VecDeque<PendingParse>,
     close_after_flush: bool,
@@ -41,6 +42,7 @@ impl FrontendContext {
             backend_identity: BackendIdentity::random(),
             gateway_session: None,
             stage: AuthStage::Startup,
+            is_admin: false,
             prepared_statements: HashMap::new(),
             pending_parses: VecDeque::new(),
             close_after_flush: false,
@@ -86,6 +88,8 @@ impl FrontendContext {
         if config_password != supplied_password {
             return Err("authentication failed".to_string());
         }
+
+        self.is_admin = user.admin;
 
         // TODO: Remove when gateway sessions are used, this would lead to dead code otherwise.
         self.gateway_session = None;
