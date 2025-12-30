@@ -139,7 +139,15 @@ impl ShardPool {
         Ok(())
     }
 
-    async fn push_idle(&self, conn: BackendConnection, permit: OwnedSemaphorePermit) {
+    async fn push_idle(&self, mut conn: BackendConnection, permit: OwnedSemaphorePermit) {
+        if let Err(err) = conn.reset_session().await {
+            warn!(
+                "dropping backend connection after reset failure on shard {}: {err}",
+                self.shard.shard_name
+            );
+            return;
+        }
+        conn.prepared_clear();
         let mut idle = self.idle.lock().await;
         idle.push_back(IdleConnection { conn, permit });
     }

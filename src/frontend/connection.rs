@@ -224,7 +224,12 @@ impl FrontendConnection {
             return Ok(true);
         }
 
-        let Some(session) = self.context.gateway_session.as_mut() else {
+        let (pending_parses, gateway_session) = {
+            let context = &mut self.context;
+            (&mut context.pending_parses, &mut context.gateway_session)
+        };
+
+        let Some(session) = gateway_session.as_mut() else {
             return Ok(true);
         };
 
@@ -242,7 +247,28 @@ impl FrontendConnection {
             };
 
             backend.consume(total_len);
-            self.buffers.queue_response(&frame);
+
+            let mut forward = true;
+            match tag {
+                b'1' => {
+                    if let Some(pending) = pending_parses.pop_front() {
+                        if let Some(name) = pending.name {
+                            backend.prepared_insert(name);
+                        }
+                        if pending.suppress_response {
+                            forward = false;
+                        }
+                    }
+                }
+                b'E' => {
+                    pending_parses.clear();
+                }
+                _ => {}
+            }
+
+            if forward {
+                self.buffers.queue_response(&frame);
+            }
 
             if tag == b'Z' {
                 saw_ready = true;
@@ -250,7 +276,8 @@ impl FrontendConnection {
         }
 
         if saw_ready {
-            self.context.gateway_session = None;
+            *gateway_session = None;
+            pending_parses.clear();
             self.backend_tracker.reset();
         }
 
@@ -265,6 +292,7 @@ impl FrontendConnection {
         self.buffers
             .queue_response(&responses::ready_with_status(ReadyStatus::Idle));
         self.context.gateway_session = None;
+        self.context.pending_parses.clear();
         self.backend_tracker.reset();
     }
 }

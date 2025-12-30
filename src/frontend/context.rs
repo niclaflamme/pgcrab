@@ -1,4 +1,5 @@
 use secrecy::ExposeSecret;
+use std::collections::{HashMap, VecDeque};
 
 use crate::config::users::UsersConfig;
 use crate::gateway::GatewaySession;
@@ -7,6 +8,18 @@ use crate::shared_types::{AuthStage, BackendIdentity};
 // -----------------------------------------------------------------------------
 // ----- FrontendContext -------------------------------------------------------
 
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedStatement {
+    pub(crate) query: String,
+    pub(crate) param_type_oids: Vec<i32>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingParse {
+    pub(crate) name: Option<String>,
+    pub(crate) suppress_response: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct FrontendContext {
     pub(crate) database: Option<String>,
@@ -14,6 +27,8 @@ pub(crate) struct FrontendContext {
     pub(crate) backend_identity: BackendIdentity,
     pub(crate) gateway_session: Option<GatewaySession>,
     pub(crate) stage: AuthStage,
+    pub(crate) prepared_statements: HashMap<String, PreparedStatement>,
+    pub(crate) pending_parses: VecDeque<PendingParse>,
     close_after_flush: bool,
     upgrade_to_tls: bool,
 }
@@ -26,6 +41,8 @@ impl FrontendContext {
             backend_identity: BackendIdentity::random(),
             gateway_session: None,
             stage: AuthStage::Startup,
+            prepared_statements: HashMap::new(),
+            pending_parses: VecDeque::new(),
             close_after_flush: false,
             upgrade_to_tls: false,
         }

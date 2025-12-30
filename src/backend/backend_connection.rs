@@ -1,5 +1,5 @@
 use bytes::{Buf, BufMut, BytesMut};
-use std::net::SocketAddr;
+use std::{collections::HashSet, net::SocketAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -9,6 +9,7 @@ use crate::wire::utils::peek_backend;
 pub struct BackendConnection {
     stream: TcpStream,
     buffer: BytesMut,
+    prepared: HashSet<String>,
 }
 
 impl BackendConnection {
@@ -20,6 +21,7 @@ impl BackendConnection {
         Ok(Self {
             stream,
             buffer: BytesMut::with_capacity(8192),
+            prepared: HashSet::new(),
         })
     }
 
@@ -41,6 +43,61 @@ impl BackendConnection {
 
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         self.stream.peer_addr()
+    }
+
+    pub async fn reset_session(&mut self) -> Result<(), String> {
+        let reset = build_query_message("DISCARD ALL");
+        self.send(&reset)
+            .await
+            .map_err(|e| format!("backend reset send failed: {e}"))?;
+
+        let mut saw_error = false;
+        loop {
+            loop {
+                let Some((tag, len)) = peek_backend(self.buffer()) else {
+                    break;
+                };
+                let total_len = 1 + len;
+                match tag {
+                    b'E' => {
+                        saw_error = true;
+                    }
+                    b'Z' => {
+                        self.consume(total_len);
+                        if saw_error {
+                            return Err("backend reset error response".to_string());
+                        }
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+                self.consume(total_len);
+            }
+
+            let n = self
+                .read()
+                .await
+                .map_err(|e| format!("backend reset read failed: {e}"))?;
+            if n == 0 {
+                return Err("backend closed during reset".to_string());
+            }
+        }
+    }
+
+    pub fn prepared_contains(&self, name: &str) -> bool {
+        self.prepared.contains(name)
+    }
+
+    pub fn prepared_insert(&mut self, name: String) {
+        self.prepared.insert(name);
+    }
+
+    pub fn prepared_remove(&mut self, name: &str) {
+        self.prepared.remove(name);
+    }
+
+    pub fn prepared_clear(&mut self) {
+        self.prepared.clear();
     }
 
     pub async fn startup(
@@ -145,6 +202,16 @@ fn build_password_message(password: &str) -> BytesMut {
     buf.put_u8(b'p');
     buf.put_u32(payload_len as u32);
     buf.extend_from_slice(password.as_bytes());
+    buf.put_u8(0);
+    buf
+}
+
+fn build_query_message(query: &str) -> BytesMut {
+    let payload_len = 4 + query.len() + 1;
+    let mut buf = BytesMut::with_capacity(1 + payload_len);
+    buf.put_u8(b'Q');
+    buf.put_u32(payload_len as u32);
+    buf.extend_from_slice(query.as_bytes());
     buf.put_u8(0);
     buf
 }
