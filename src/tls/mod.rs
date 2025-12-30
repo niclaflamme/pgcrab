@@ -4,15 +4,18 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tracing::error;
 
 // -----------------------------------------------------------------------------
-// ----- TLS ------------------------------------------------------------------
+// ----- Constants -------------------------------------------------------------
 
 static TLS_ACCEPTOR: OnceLock<Option<TlsAcceptor>> = OnceLock::new();
+
+// -----------------------------------------------------------------------------
+// ----- TLS: Exported ---------------------------------------------------------
 
 pub fn acceptor() -> Option<TlsAcceptor> {
     TLS_ACCEPTOR
@@ -25,6 +28,9 @@ pub fn acceptor() -> Option<TlsAcceptor> {
         })
         .clone()
 }
+
+// -----------------------------------------------------------------------------
+// ----- TLS: Private helpers --------------------------------------------------
 
 fn load_from_env() -> Result<Option<TlsAcceptor>, String> {
     let cert_path = env::var("PGCRAB_TLS_CERT").ok();
@@ -49,8 +55,8 @@ fn load_from_env() -> Result<Option<TlsAcceptor>, String> {
 }
 
 fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, String> {
-    let file = File::open(path)
-        .map_err(|e| format!("failed to open tls cert {}: {e}", path.display()))?;
+    let file =
+        File::open(path).map_err(|e| format!("failed to open tls cert {}: {e}", path.display()))?;
     let mut reader = BufReader::new(file);
     let certs = rustls_pemfile::certs(&mut reader)
         .collect::<Result<Vec<_>, _>>()
@@ -64,8 +70,8 @@ fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, String> {
 }
 
 fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>, String> {
-    let file = File::open(path)
-        .map_err(|e| format!("failed to open tls key {}: {e}", path.display()))?;
+    let file =
+        File::open(path).map_err(|e| format!("failed to open tls key {}: {e}", path.display()))?;
     let mut reader = BufReader::new(file);
     let key = rustls_pemfile::private_key(&mut reader)
         .map_err(|e| format!("failed to read tls key {}: {e}", path.display()))?

@@ -3,6 +3,9 @@ use rand::Rng;
 // -----------------------------------------------------------------------------
 // ----- BackendIdentity -------------------------------------------------------
 
+/// Represents the Postgres backend "pid + secret key" pair.
+/// Postgres assigns these values so clients can send a CancelRequest for an
+/// in-flight query on a specific backend connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendIdentity {
     pub process_id: i32,
