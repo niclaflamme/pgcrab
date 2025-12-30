@@ -1,40 +1,35 @@
-# Refactor plan: FrontendConnection readability
+# Plan: prewarm shard connections on boot
 
 ## Goals
-- Make the Startup -> Authenticating -> Ready flow obvious at a glance.
-- Separate IO/buffering, protocol parsing, auth/backends, and response building.
-- Reduce the size and cognitive load of `FrontendConnection` without changing behavior.
+- Maintain a per-shard pool with `min_connections` warmed on startup.
+- Enforce `max_connections` and reuse idle backend connections.
+- Keep frontend auth flow unchanged (backend connections still deferred until first query).
 
-## Current pain points (from `src/frontend/connection.rs`)
-- One file handles IO, state machine, parsing, auth, backend connect, and response encoding.
-- Stage-specific handling mixes parsing, state updates, and response assembly.
-- Response builders are embedded at the bottom of the connection implementation.
-- Debug prints in the Ready handler obscure intent.
+## Data structures (where they live)
+- `backend`:
+  - Keep `BackendConnection` as the raw socket wrapper.
+  - Optional helper: `BackendConnector` with `connect(shard)` for single responsibility.
+- `gateway`:
+  - `ShardPool`: holds shard config + idle queue + max permits.
+    - Fields: `shard: ShardRecord`, `idle: VecDeque<BackendConnection>`, `max: Semaphore`, `min: u32`.
+    - `acquire() -> PooledConnection` (uses permit + pulls/creates connection).
+    - `release(conn)` returns to idle queue (non-async path via channel).
+  - `GatewayPools`: `HashMap<String, Arc<ShardPool>>` keyed by shard name.
+    - `warm_all()` spawns tasks to reach `min_connections` per shard.
+- `main`:
+  - Build a shared `GatewayPools` after `Config::init`.
+  - Call `warm_all()` before accepting client connections.
+  - Pass `Arc<GatewayPools>` into `FrontendConnection::new`.
 
-## Proposed refactor steps
-1. Document the state machine in-code.
-   - Add a top-level doc comment for `FrontendConnection` explaining stages and key transitions.
-   - Add a short comment in the main loop about the read -> track -> process -> flush flow.
-2. Extract backend response builders.
-   - Move `be_*` helpers into `src/frontend/responses.rs` (or `src/wire_protocol/backend.rs`).
-   - Keep the same public signatures and return types.
-3. Split stage handlers into focused modules.
-   - Create `src/frontend/handlers/startup.rs`, `authenticating.rs`, `ready.rs`.
-   - Each module exposes a `handle_*` function that receives a mutable context.
-4. Introduce a small context struct for shared state.
-   - Example fields: `stage`, `username`, `database`, `backend_identity`, `gateway_session`.
-   - Keep IO buffers and tracking separate from stage logic.
-5. Isolate IO buffering and sequencing.
-   - Move inbox/outbox + `SequenceTracker` logic into a helper struct (e.g., `FrontendBuffers`).
-   - Expose small methods: `read_into_inbox`, `drain_sequences`, `queue_response`, `flush`.
-6. Clean up error handling and logging.
-   - Replace `println!` with structured logging or remove noisy debug output.
-   - Normalize protocol violation responses in one place.
-
-## Non-goals
-- No behavior changes to wire protocol handling.
-- No changes to public exports in `src/lib.rs` or `src/frontend/mod.rs`.
+## Implementation steps
+1. Add pool structs in `src/gateway/pool.rs` and export from `src/gateway/mod.rs`.
+2. Implement `ShardPool::warm_min()` that opens connections until `idle.len() >= min`.
+3. Modify `GatewaySession::connect_to_shard` to accept a pool (or `GatewayPools`) and `acquire()`.
+4. Update `FrontendConnection::new` signature to accept `Arc<GatewayPools>`.
+5. In `main`, create `GatewayPools` from `Config::snapshot().shards` and call `warm_all()`.
+6. Add basic logging around pool warmup and connection failures.
 
 ## Validation
-- Manual smoke test: `psql` connection and auth flow.
-- If tests exist, run the existing suite unchanged.
+- Unit: test `ShardPool` min/max enforcement (mock connector or loopback test).
+- Integration: existing auth flow should remain green.
+- Manual: verify startup creates backend connections even without client queries.

@@ -1,4 +1,5 @@
 use bytes::BytesMut;
+use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::select;
 
@@ -6,6 +7,7 @@ use crate::frontend::buffers::FrontendBuffers;
 use crate::frontend::context::FrontendContext;
 use crate::frontend::handlers;
 use crate::frontend::transport::FrontendTransport;
+use crate::gateway::GatewayPools;
 use crate::shared_types::AuthStage;
 use crate::tls;
 
@@ -19,18 +21,20 @@ pub struct FrontendConnection {
     buffers: FrontendBuffers,
     transport: FrontendTransport,
     tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
+    _pools: Arc<GatewayPools>,
 }
 
 // -----------------------------------------------------------------------------
 // ----- FrontendConnection: Static --------------------------------------------
 
 impl FrontendConnection {
-    pub fn new(stream: TcpStream) -> Self {
+    pub fn new(stream: TcpStream, pools: Arc<GatewayPools>) -> Self {
         Self {
             context: FrontendContext::new(),
             buffers: FrontendBuffers::new(),
             transport: FrontendTransport::new(stream),
             tls_acceptor: tls::acceptor(),
+            _pools: pools,
         }
     }
 }

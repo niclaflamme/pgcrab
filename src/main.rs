@@ -9,7 +9,9 @@ use tokio::signal;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, fmt};
 
-use pgcrab::{Config, FrontendConnection, config::types::LogLevel};
+use std::sync::Arc;
+
+use pgcrab::{Config, FrontendConnection, config::shards::ShardsConfig, config::types::LogLevel, gateway::GatewayPools};
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
@@ -49,6 +51,8 @@ fn init_tracing() {
 
 async fn run_forever() -> std::io::Result<()> {
     let config = Config::snapshot();
+    let pools = Arc::new(GatewayPools::new(ShardsConfig::snapshot()));
+    pools.warm_all().await;
 
     let socket = if config.listen_addr.is_ipv4() {
         TcpSocket::new_v4()?
@@ -78,8 +82,9 @@ async fn run_forever() -> std::io::Result<()> {
                 // You can still set nodelay on the Tokio stream.
                 let _ = stream.set_nodelay(true);
 
+                let pools = pools.clone();
                 tokio::spawn(async move {
-                    let conn = FrontendConnection::new(stream);
+                    let conn = FrontendConnection::new(stream, pools);
 
                     if let Err(e) = conn.serve().await {
                         error!("client {peer} error: {e}");
