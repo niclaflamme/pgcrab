@@ -9,4 +9,4 @@ pub mod wire_protocol;
 
 pub use config::Config;
 pub use errors::ErrorResponse;
-pub use frontend::connection::FrontendConnection;
+pub use frontend::FrontendConnection;

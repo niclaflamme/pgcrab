@@ -1,6 +1,8 @@
 use memchr::memchr;
 use std::{fmt, str};
 
+use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+
 // -----------------------------------------------------------------------------
 // ----- ExecuteFrameObserver --------------------------------------------------
 
@@ -18,45 +20,34 @@ impl<'a> ExecuteFrameObserver<'a> {
     /// Cheap, peeks at the header-only. Returns total frame length if fully present.
     #[inline]
     pub fn peek(buf: &[u8]) -> Option<usize> {
-        if buf.len() < 5 || buf[0] != b'E' {
-            return None;
-        }
-        let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-        if len < 4 {
-            return None;
-        }
-        let total = 1 + len;
-        if buf.len() < total {
-            return None;
-        }
-        Some(total)
+        peek_tagged_frame(buf, b'E').map(|meta| meta.total_len)
     }
 
     /// Validate and build zero-copy observer over a complete frame slice.
     pub fn new(frame: &'a [u8]) -> Result<Self, NewExecuteObserverError> {
-        if frame.len() < 5 || frame[0] != b'E' {
-            return Err(NewExecuteObserverError::UnexpectedTag(
-                *frame.get(0).unwrap_or(&0),
-            ));
-        }
-        let len = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
-        let total = 1 + len;
-        if frame.len() != total {
-            return Err(NewExecuteObserverError::UnexpectedLength);
-        }
+        let meta = match parse_tagged_frame(frame, b'E') {
+            Ok(meta) => meta,
+            Err(TaggedFrameError::UnexpectedTag(tag)) => {
+                return Err(NewExecuteObserverError::UnexpectedTag(tag));
+            }
+            Err(TaggedFrameError::UnexpectedLength | TaggedFrameError::InvalidLength(_)) => {
+                return Err(NewExecuteObserverError::UnexpectedLength);
+            }
+        };
         let mut pos = 5;
         // portal
-        let rel = memchr(0, &frame[pos..]).ok_or(NewExecuteObserverError::UnexpectedEof)?;
+        let rel = memchr(0, &frame[pos..meta.total_len])
+            .ok_or(NewExecuteObserverError::UnexpectedEof)?;
         let portal =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewExecuteObserverError::InvalidUtf8)?;
         pos += rel + 1;
         // max_rows
-        if pos + 4 > total {
+        if pos + 4 > meta.total_len {
             return Err(NewExecuteObserverError::UnexpectedEof);
         }
         let max_rows = be_i32(&frame[pos..]);
         pos += 4;
-        if pos != total {
+        if pos != meta.total_len {
             return Err(NewExecuteObserverError::UnexpectedLength);
         }
         Ok(Self {

@@ -1,6 +1,7 @@
 use std::error::Error as StdError;
 use std::fmt;
 
+use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
 // -----------------------------------------------------------------------------
 // ----- CopyDoneFrameObserver -------------------------------------------------
 
@@ -16,26 +17,25 @@ impl<'a> CopyDoneFrameObserver<'a> {
     /// Cheap, peeks at the header-only. Returns total frame length if fully present.
     #[inline]
     pub fn peek(buf: &[u8]) -> Option<usize> {
-        if buf.len() < 5 || buf[0] != b'c' {
+        let meta = peek_tagged_frame(buf, b'c')?;
+        if meta.len != 4 {
             return None;
         }
-        let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-        if len != 4 {
-            return None;
-        }
-        Some(5)
+        Some(meta.total_len)
     }
 
     /// Validate and build zero-copy observer over a complete frame slice.
     pub fn new(frame: &'a [u8]) -> Result<Self, NewCopyDoneObserverError> {
-        if frame.len() != 5 {
-            return Err(NewCopyDoneObserverError::UnexpectedLength);
-        }
-        if frame[0] != b'c' {
-            return Err(NewCopyDoneObserverError::UnexpectedTag(frame[0]));
-        }
-        let len = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
-        if len != 4 {
+        let meta = match parse_tagged_frame(frame, b'c') {
+            Ok(meta) => meta,
+            Err(TaggedFrameError::UnexpectedTag(tag)) => {
+                return Err(NewCopyDoneObserverError::UnexpectedTag(tag));
+            }
+            Err(TaggedFrameError::UnexpectedLength | TaggedFrameError::InvalidLength(_)) => {
+                return Err(NewCopyDoneObserverError::UnexpectedLength);
+            }
+        };
+        if meta.len != 4 {
             return Err(NewCopyDoneObserverError::UnexpectedLength);
         }
         Ok(Self { _frame: frame })

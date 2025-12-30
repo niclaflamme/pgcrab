@@ -3,6 +3,8 @@
 use memchr::memchr;
 use std::{fmt, str};
 
+use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+
 // -----------------------------------------------------------------------------
 // ----- BindFrameObserver -----------------------------------------------------
 
@@ -40,53 +42,40 @@ impl<'a> BindFrameObserver<'a> {
     /// Cheap, peeks at the header-only. Returns total frame length if fully present.
     #[inline]
     pub fn peek(buf: &[u8]) -> Option<usize> {
-        if buf.len() < 5 || buf[0] != b'B' {
-            return None;
-        }
-
-        let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-        if len < 4 {
-            return None;
-        }
-
-        let total = 1 + len;
-        if buf.len() < total {
-            return None;
-        }
-
-        Some(total)
+        peek_tagged_frame(buf, b'B').map(|meta| meta.total_len)
     }
 
     /// Validate and build zero-copy observer over a complete frame slice.
     pub fn new(frame: &'a [u8]) -> Result<Self, NewBindObserverError> {
-        if frame.len() < 5 || frame[0] != b'B' {
-            return Err(NewBindObserverError::UnexpectedTag(
-                *frame.get(0).unwrap_or(&0),
-            ));
-        }
+        let meta = match parse_tagged_frame(frame, b'B') {
+            Ok(meta) => meta,
+            Err(TaggedFrameError::UnexpectedTag(tag)) => {
+                return Err(NewBindObserverError::UnexpectedTag(tag));
+            }
+            Err(TaggedFrameError::UnexpectedLength | TaggedFrameError::InvalidLength(_)) => {
+                return Err(NewBindObserverError::UnexpectedLength);
+            }
+        };
 
-        let len = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
-        let total = 1 + len;
-        if frame.len() != total {
-            return Err(NewBindObserverError::UnexpectedLength);
-        }
-
+        let total = meta.total_len;
         let mut pos = 5;
 
         // portal
-        let rel = memchr(0, &frame[pos..]).ok_or(NewBindObserverError::UnexpectedEof)?;
+        let rel = memchr(0, &frame[pos..meta.total_len])
+            .ok_or(NewBindObserverError::UnexpectedEof)?;
         let portal =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewBindObserverError::InvalidUtf8)?;
         pos += rel + 1;
 
         // statement
-        let rel = memchr(0, &frame[pos..]).ok_or(NewBindObserverError::UnexpectedEof)?;
+        let rel = memchr(0, &frame[pos..meta.total_len])
+            .ok_or(NewBindObserverError::UnexpectedEof)?;
         let statement =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewBindObserverError::InvalidUtf8)?;
         pos += rel + 1;
 
         // param format count
-        if pos + 2 > total {
+        if pos + 2 > meta.total_len {
             return Err(NewBindObserverError::UnexpectedEof);
         }
         let param_format_count = be_u16(&frame[pos..]) as usize;

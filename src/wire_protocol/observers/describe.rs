@@ -1,6 +1,8 @@
 use memchr::memchr;
 use std::{fmt, str};
 
+use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+
 // -----------------------------------------------------------------------------
 // ----- DescribeFrameObserver -------------------------------------------------
 
@@ -27,35 +29,23 @@ impl<'a> DescribeFrameObserver<'a> {
     /// Cheap, peeks at the header-only. Returns total frame length if fully present.
     #[inline]
     pub fn peek(buf: &[u8]) -> Option<usize> {
-        if buf.len() < 5 || buf[0] != b'D' {
-            return None;
-        }
-        let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-        if len < 4 {
-            return None;
-        }
-        let total = 1 + len;
-        if buf.len() < total {
-            return None;
-        }
-        Some(total)
+        peek_tagged_frame(buf, b'D').map(|meta| meta.total_len)
     }
 
     /// Validate and build zero-copy observer over a complete frame slice.
     pub fn new(frame: &'a [u8]) -> Result<Self, NewDescribeObserverError> {
-        if frame.len() < 5 || frame[0] != b'D' {
-            return Err(NewDescribeObserverError::UnexpectedTag(
-                *frame.get(0).unwrap_or(&0),
-            ));
-        }
-        let len = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
-        let total = 1 + len;
-        if frame.len() != total {
-            return Err(NewDescribeObserverError::UnexpectedLength);
-        }
+        let meta = match parse_tagged_frame(frame, b'D') {
+            Ok(meta) => meta,
+            Err(TaggedFrameError::UnexpectedTag(tag)) => {
+                return Err(NewDescribeObserverError::UnexpectedTag(tag));
+            }
+            Err(TaggedFrameError::UnexpectedLength | TaggedFrameError::InvalidLength(_)) => {
+                return Err(NewDescribeObserverError::UnexpectedLength);
+            }
+        };
         let mut pos = 5;
         // target
-        if pos + 1 > total {
+        if pos + 1 > meta.total_len {
             return Err(NewDescribeObserverError::UnexpectedEof);
         }
         let target_byte = frame[pos];
@@ -66,11 +56,12 @@ impl<'a> DescribeFrameObserver<'a> {
         };
         pos += 1;
         // name
-        let rel = memchr(0, &frame[pos..]).ok_or(NewDescribeObserverError::UnexpectedEof)?;
+        let rel = memchr(0, &frame[pos..meta.total_len])
+            .ok_or(NewDescribeObserverError::UnexpectedEof)?;
         let name = str::from_utf8(&frame[pos..pos + rel])
             .map_err(NewDescribeObserverError::InvalidUtf8)?;
         pos += rel + 1;
-        if pos != total {
+        if pos != meta.total_len {
             return Err(NewDescribeObserverError::UnexpectedLength);
         }
         Ok(Self {

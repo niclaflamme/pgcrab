@@ -1,6 +1,8 @@
 use memchr::memchr;
 use std::{error::Error as StdError, fmt, str};
 
+use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+
 // -----------------------------------------------------------------------------
 // ----- PasswordMessageFrameObserver ------------------------------------------
 
@@ -17,45 +19,35 @@ impl<'a> PasswordMessageFrameObserver<'a> {
     /// Cheap, peeks at the header-only. Returns total frame length if fully present.
     #[inline]
     pub fn peek(buf: &[u8]) -> Option<usize> {
-        if buf.len() < 5 || buf[0] != b'p' {
+        let meta = peek_tagged_frame(buf, b'p')?;
+        if meta.len < 5 {
             return None;
         }
-
-        let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-        if len < 5 {
-            // at least empty string + nul
-            return None;
-        }
-
-        let total = 1 + len;
-        if buf.len() < total {
-            return None;
-        }
-
-        Some(total)
+        Some(meta.total_len)
     }
 
     /// Validate and build zero-copy observer over a complete frame slice.
     pub fn new(frame: &'a [u8]) -> Result<Self, NewPasswordMessageObserverError> {
-        if frame.len() < 5 || frame[0] != b'p' {
-            return Err(NewPasswordMessageObserverError::UnexpectedTag(
-                *frame.get(0).unwrap_or(&0),
-            ));
+        let meta = match parse_tagged_frame(frame, b'p') {
+            Ok(meta) => meta,
+            Err(TaggedFrameError::UnexpectedTag(tag)) => {
+                return Err(NewPasswordMessageObserverError::UnexpectedTag(tag));
+            }
+            Err(TaggedFrameError::UnexpectedLength) => {
+                return Err(NewPasswordMessageObserverError::UnexpectedLength);
+            }
+            Err(TaggedFrameError::InvalidLength(len)) => {
+                return Err(NewPasswordMessageObserverError::InvalidLength(len));
+            }
+        };
+
+        if meta.len < 5 {
+            return Err(NewPasswordMessageObserverError::InvalidLength(meta.len));
         }
 
-        let len = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
-        if len < 5 {
-            return Err(NewPasswordMessageObserverError::InvalidLength(len));
-        }
-
-        let total = 1 + len;
-        if frame.len() != total {
-            return Err(NewPasswordMessageObserverError::UnexpectedLength);
-        }
-
-        let nul_pos =
-            memchr(0, &frame[5..]).ok_or(NewPasswordMessageObserverError::UnexpectedEof)?;
-        if 5 + nul_pos + 1 != total {
+        let nul_pos = memchr(0, &frame[5..meta.total_len])
+            .ok_or(NewPasswordMessageObserverError::UnexpectedEof)?;
+        if 5 + nul_pos + 1 != meta.total_len {
             return Err(NewPasswordMessageObserverError::UnexpectedLength);
         }
 

@@ -1,6 +1,8 @@
 use memchr::memchr;
 use std::{fmt, str};
 
+use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+
 // -----------------------------------------------------------------------------
 // ----- QueryFrameObserver ----------------------------------------------------
 
@@ -17,43 +19,31 @@ impl<'a> QueryFrameObserver<'a> {
     /// Cheap, peeks at the header-only. Returns total frame length if fully present.
     #[inline]
     pub fn peek(buf: &[u8]) -> Option<usize> {
-        if buf.len() < 5 || buf[0] != b'Q' {
-            return None;
-        }
-        let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-        if len < 4 {
-            return None;
-        }
-        let total = 1 + len;
-        if buf.len() < total {
-            return None;
-        }
-        Some(total)
+        peek_tagged_frame(buf, b'Q').map(|meta| meta.total_len)
     }
 
     /// Validate and build zero-copy observer over a complete frame slice.
     pub fn new(frame: &'a [u8]) -> Result<Self, NewQueryObserverError> {
-        if frame.len() < 5 || frame[0] != b'Q' {
-            return Err(NewQueryObserverError::UnexpectedTag(
-                *frame.get(0).unwrap_or(&0),
-            ));
-        }
-
-        let len = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
-        let total = 1 + len;
-        if frame.len() != total {
-            return Err(NewQueryObserverError::UnexpectedLength);
-        }
+        let meta = match parse_tagged_frame(frame, b'Q') {
+            Ok(meta) => meta,
+            Err(TaggedFrameError::UnexpectedTag(tag)) => {
+                return Err(NewQueryObserverError::UnexpectedTag(tag));
+            }
+            Err(TaggedFrameError::UnexpectedLength | TaggedFrameError::InvalidLength(_)) => {
+                return Err(NewQueryObserverError::UnexpectedLength);
+            }
+        };
 
         let mut pos = 5;
 
         // query
-        let rel = memchr(0, &frame[pos..]).ok_or(NewQueryObserverError::UnexpectedEof)?;
+        let rel = memchr(0, &frame[pos..meta.total_len])
+            .ok_or(NewQueryObserverError::UnexpectedEof)?;
         let query =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewQueryObserverError::InvalidUtf8)?;
         pos += rel + 1;
 
-        if pos != total {
+        if pos != meta.total_len {
             return Err(NewQueryObserverError::UnexpectedLength);
         }
 

@@ -1,3 +1,5 @@
+use crate::wire_protocol::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+
 // -----------------------------------------------------------------------------
 // ----- SSPIResponseFrameObserver ---------------------------------------------
 
@@ -14,38 +16,25 @@ impl<'a> SSPIResponseFrameObserver<'a> {
     /// Cheap header peek. Returns total frame length if fully present.
     #[inline]
     pub fn peek(buf: &[u8]) -> Option<usize> {
-        if buf.len() < 5 || buf[0] != b'p' {
-            return None;
-        }
-        let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-        if len < 4 {
-            return None;
-        }
-        // tag + body(length includes its own 4 bytes)
-        let total = 1 + len;
-        if buf.len() < total {
-            return None;
-        }
-        Some(total)
+        peek_tagged_frame(buf, b'p').map(|meta| meta.total_len)
     }
 
     /// Strict validator. Accepts any binary payload (including empty).
     #[inline]
     pub fn new(frame: &'a [u8]) -> Result<Self, NewSSPIResponseObserverError> {
-        if frame.len() < 5 {
-            return Err(NewSSPIResponseObserverError::UnexpectedLength);
-        }
-        if frame[0] != b'p' {
-            return Err(NewSSPIResponseObserverError::UnexpectedTag(frame[0]));
-        }
-        let len = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
-        if len < 4 {
-            return Err(NewSSPIResponseObserverError::InvalidLength(len as u32));
-        }
-        let total = 1 + len;
-        if total != frame.len() {
-            return Err(NewSSPIResponseObserverError::UnexpectedLength);
-        }
+        let meta = match parse_tagged_frame(frame, b'p') {
+            Ok(meta) => meta,
+            Err(TaggedFrameError::UnexpectedTag(tag)) => {
+                return Err(NewSSPIResponseObserverError::UnexpectedTag(tag));
+            }
+            Err(TaggedFrameError::UnexpectedLength) => {
+                return Err(NewSSPIResponseObserverError::UnexpectedLength);
+            }
+            Err(TaggedFrameError::InvalidLength(len)) => {
+                return Err(NewSSPIResponseObserverError::InvalidLength(len as u32));
+            }
+        };
+        let _ = meta;
         // SSPI token is opaque; zero or more bytes are allowed.
         Ok(Self {
             frame,

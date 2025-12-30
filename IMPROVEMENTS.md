@@ -1,0 +1,12 @@
+# Wire Protocol Improvements
+
+- **Unify message type definitions**: `wire_protocol/types/message_type.rs` defines a broad enum that mixes frontend and backend variants, while observers only care about a subset. Consider splitting into `frontend::MessageType` and `backend::MessageType` plus a small cross‑type where needed.
+- **Reduce duplication in frame peeking**: `wire_protocol/utils/peek_frontend.rs` repeats tag+length parsing logic already embedded in each observer’s `peek`. Consider a single helper that validates tag + length and returns a frame slice for the observer, to remove parallel logic paths.
+- **Observer field usage**: many observers store `_frame` but never expose or use it. Either add accessor methods to make the stored frame useful (e.g., `raw()`), or remove stored frames and keep only parsed fields to avoid pseudo‑zero‑copy semantics.
+- **Consistent error types**: each observer defines its own error enum; these are similar in shape and could be unified with a small shared error type (`UnexpectedTag`, `UnexpectedLength`, `InvalidUtf8`, `UnexpectedEof`) to reduce boilerplate.
+- **Protocol version handling**: startup parsing hard‑codes protocol `3.0` and rejects otherwise. If v3 only is fine, add a clear error code and doc comment; if future extension is desired, add a version switch in one place.
+- **Peek/parse test coverage overlap**: many tests validate both `peek` and `new`. Consider test helpers that build canonical frames to avoid repeated, near‑identical test code.
+- **Tag conflict handling**: several message types share the same tag (`p`); current logic uses sequential checks. Consider a dedicated discriminator function per auth stage to avoid accidental misclassification if new frame types are added.
+- **String parsing helpers**: multiple observers use `memchr` + manual UTF‑8 handling. A shared helper for reading C‑strings from a frame slice would reduce code duplication and potential parsing inconsistencies.
+- **Expose borrowed slices consistently**: some observers expose parsed strings, others do not. A consistent public API (e.g., `portal()`, `statement()`, `query()`) would make observer usage clearer and reduce the temptation to re‑parse elsewhere.
+- **Clear separation of frontend/backend protocol**: backend frames were removed; the remaining module layout still suggests both directions. Consider reorganizing folders into `frontend/` and `backend/` (or `frontend/` + `shared/`) to match current usage.

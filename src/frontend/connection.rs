@@ -16,7 +16,7 @@ use crate::wire_protocol::types::MessageType;
 use crate::wire_protocol::utils::peek_frontend;
 use crate::{ErrorResponse, shared_types::BackendIdentity};
 
-use super::sequence_tracker::SequenceTracker;
+use crate::frontend::sequence_tracker::SequenceTracker;
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
