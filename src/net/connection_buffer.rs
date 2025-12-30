@@ -77,7 +77,7 @@ impl ConnectionBuffer {
     /// true when caller must flush because both slabs are full
     #[inline]
     pub fn needs_flush(&self) -> bool {
-        self.primary.len() == SLAB_SIZE || !self.secondary.is_empty()
+        self.primary.len() == SLAB_SIZE && self.secondary.len() == SLAB_SIZE
     }
 
     /// pop up to one full slab for writing

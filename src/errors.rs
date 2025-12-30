@@ -293,7 +293,7 @@ mod tests {
             .with_line(1337)
             .with_routine("serve_startup");
         let b = e.to_bytes();
-        assert!(b.windows(2).any(|w| w == b"S\0")); // crude sanity
+        assert!(b.windows(7).any(|w| w == b"SFATAL\0")); // crude sanity
     }
 }
 

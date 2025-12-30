@@ -29,3 +29,6 @@ tokio = { version = "1.38", features = [
 toml = "0.9.5"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tokio-postgres = "0.7.13"
