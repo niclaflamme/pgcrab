@@ -21,7 +21,7 @@ pub struct FrontendConnection {
     buffers: FrontendBuffers,
     transport: FrontendTransport,
     tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
-    _pools: Arc<GatewayPools>,
+    pools: Arc<GatewayPools>,
 }
 
 // -----------------------------------------------------------------------------
@@ -34,7 +34,7 @@ impl FrontendConnection {
             buffers: FrontendBuffers::new(),
             transport: FrontendTransport::new(stream),
             tls_acceptor: tls::acceptor(),
-            _pools: pools,
+            pools,
         }
     }
 }
@@ -107,7 +107,13 @@ impl FrontendConnection {
                 .await
             }
             AuthStage::Ready => {
-                handlers::ready::handle_ready(&mut self.context, &mut self.buffers, seq_or_msg)
+                handlers::ready::handle_ready(
+                    &mut self.context,
+                    &mut self.buffers,
+                    seq_or_msg,
+                    self.pools.as_ref(),
+                )
+                .await
             }
         }
     }

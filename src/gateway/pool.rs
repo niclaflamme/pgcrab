@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
+use rand::seq::IteratorRandom;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn};
 
@@ -28,6 +29,11 @@ impl GatewayPools {
 
     pub fn get(&self, shard_name: &str) -> Option<Arc<ShardPool>> {
         self.pools.get(shard_name).cloned()
+    }
+
+    pub fn random_pool(&self) -> Option<Arc<ShardPool>> {
+        let mut rng = rand::rng();
+        self.pools.values().choose(&mut rng).cloned()
     }
 
     pub async fn warm_all(&self) {

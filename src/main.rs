@@ -11,7 +11,10 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 use std::sync::Arc;
 
-use pgcrab::{Config, FrontendConnection, config::shards::ShardsConfig, config::types::LogLevel, gateway::GatewayPools};
+use pgcrab::{
+    Config, FrontendConnection, config::shards::ShardsConfig, config::types::LogLevel,
+    gateway::GatewayPools,
+};
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------
@@ -51,6 +54,7 @@ fn init_tracing() {
 
 async fn run_forever() -> std::io::Result<()> {
     let config = Config::snapshot();
+
     let pools = Arc::new(GatewayPools::new(ShardsConfig::snapshot()));
     pools.warm_all().await;
 

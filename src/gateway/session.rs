@@ -1,19 +1,22 @@
+use std::sync::Arc;
+
 use crate::backend::BackendConnection;
-use crate::config::shards::ShardRecord;
+use crate::gateway::{PooledConnection, ShardPool};
 
 #[derive(Debug)]
 pub struct GatewaySession {
-    backend: BackendConnection,
+    backend: PooledConnection,
 }
 
 impl GatewaySession {
-    pub async fn connect_to_shard(shard: &ShardRecord) -> Result<Self, String> {
-        let backend = BackendConnection::connect(&shard.host, shard.port)
-            .await
-            .map_err(|e| format!("failed to connect to backend: {}", e))?;
-
-        let session = Self { backend };
-        let _ = session.backend.peer_addr();
+    pub async fn from_pool(pool: &Arc<ShardPool>) -> Result<Self, String> {
+        let backend = pool.acquire().await?;
+        let mut session = Self { backend };
+        let _ = session.backend.connection().peer_addr();
         Ok(session)
+    }
+
+    pub fn backend(&mut self) -> &mut BackendConnection {
+        self.backend.connection()
     }
 }
