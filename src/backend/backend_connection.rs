@@ -1,6 +1,7 @@
 use bytes::BytesMut;
-use tokio::net::TcpStream;
+use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 #[derive(Debug)]
 pub struct BackendConnection {
@@ -26,5 +27,9 @@ impl BackendConnection {
 
     pub async fn read(&mut self) -> std::io::Result<usize> {
         self.stream.read_buf(&mut self.buffer).await
+    }
+
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+        self.stream.peer_addr()
     }
 }

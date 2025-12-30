@@ -31,7 +31,6 @@ pub struct FrontendConnection {
     database: Option<String>,
     username: Option<String>,
 
-    #[allow(dead_code)]
     backend_identity: BackendIdentity,
 
     gateway_session: Option<GatewaySession>,

@@ -6,8 +6,7 @@ use std::{fmt, str};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CopyFailFrameObserver<'a> {
-    #[allow(dead_code)]
-    frame: &'a [u8],
+    _frame: &'a [u8],
 
     message: &'a str,
 }
@@ -63,7 +62,10 @@ impl<'a> CopyFailFrameObserver<'a> {
             return Err(NewCopyFailObserverError::UnexpectedLength);
         }
 
-        Ok(Self { frame, message })
+        Ok(Self {
+            _frame: frame,
+            message,
+        })
     }
 }
 

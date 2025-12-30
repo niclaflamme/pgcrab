@@ -6,8 +6,7 @@ use std::{fmt, str};
 
 #[derive(Clone, Copy, Debug)]
 pub struct DescribeFrameObserver<'a> {
-    #[allow(dead_code)]
-    frame: &'a [u8],
+    _frame: &'a [u8],
     target: DescribeTarget,
     name: &'a str,
 }
@@ -75,7 +74,7 @@ impl<'a> DescribeFrameObserver<'a> {
             return Err(NewDescribeObserverError::UnexpectedLength);
         }
         Ok(Self {
-            frame,
+            _frame: frame,
             target,
             name,
         })

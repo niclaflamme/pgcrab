@@ -6,8 +6,7 @@ use std::{fmt, str};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ExecuteFrameObserver<'a> {
-    #[allow(dead_code)]
-    frame: &'a [u8],
+    _frame: &'a [u8],
     portal: &'a str,
     max_rows: i32,
 }
@@ -61,7 +60,7 @@ impl<'a> ExecuteFrameObserver<'a> {
             return Err(NewExecuteObserverError::UnexpectedLength);
         }
         Ok(Self {
-            frame,
+            _frame: frame,
             portal,
             max_rows,
         })

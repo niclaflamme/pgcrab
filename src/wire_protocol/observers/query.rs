@@ -6,8 +6,7 @@ use std::{fmt, str};
 
 #[derive(Clone, Copy, Debug)]
 pub struct QueryFrameObserver<'a> {
-    #[allow(dead_code)]
-    frame: &'a [u8],
+    _frame: &'a [u8],
     query: &'a str,
 }
 
@@ -58,7 +57,10 @@ impl<'a> QueryFrameObserver<'a> {
             return Err(NewQueryObserverError::UnexpectedLength);
         }
 
-        Ok(Self { frame, query })
+        Ok(Self {
+            _frame: frame,
+            query,
+        })
     }
 }
 

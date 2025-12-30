@@ -16,13 +16,16 @@ pub async fn ensure_shards_accessible() {
         .await;
 }
 
-async fn check_shards() -> Result<(), String> {
+pub fn load_config() -> Result<ConfigFile, String> {
     let config_path = config_path()?;
     let raw = fs::read_to_string(&config_path)
         .map_err(|e| format!("failed to read {}: {e}", config_path.display()))?;
 
-    let cfg: ConfigFile =
-        toml::from_str(&raw).map_err(|e| format!("invalid {}: {e}", config_path.display()))?;
+    toml::from_str(&raw).map_err(|e| format!("invalid {}: {e}", config_path.display()))
+}
+
+async fn check_shards() -> Result<(), String> {
+    let cfg = load_config()?;
 
     if cfg.shards.is_empty() {
         return Err("pgcrab.toml has no [[shards]] entries".to_string());
@@ -73,17 +76,28 @@ fn config_path() -> Result<PathBuf, String> {
 }
 
 #[derive(Debug, Deserialize)]
-struct ConfigFile {
+pub struct ConfigFile {
     #[serde(default)]
-    shards: Vec<ShardEntry>,
+    pub shards: Vec<ShardEntry>,
+    #[serde(default)]
+    pub users: Vec<UserEntry>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ShardEntry {
-    shard_name: String,
-    host: String,
-    port: u16,
-    user: String,
-    password: String,
-    database_name: String,
+#[derive(Debug, Deserialize, Clone)]
+pub struct ShardEntry {
+    pub shard_name: String,
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: String,
+    pub database_name: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct UserEntry {
+    #[serde(alias = "name")]
+    pub username: String,
+    #[serde(alias = "database")]
+    pub database_name: String,
+    pub password: String,
 }

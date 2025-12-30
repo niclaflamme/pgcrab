@@ -6,8 +6,7 @@ use std::{fmt, str};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CloseFrameObserver<'a> {
-    #[allow(dead_code)]
-    frame: &'a [u8],
+    _frame: &'a [u8],
 
     target: CloseTarget,
     name: &'a str,
@@ -79,7 +78,7 @@ impl<'a> CloseFrameObserver<'a> {
             return Err(NewCloseObserverError::UnexpectedLength);
         }
         Ok(Self {
-            frame,
+            _frame: frame,
             target,
             name,
         })

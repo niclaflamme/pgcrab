@@ -6,8 +6,7 @@ use std::fmt;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SyncFrameObserver<'a> {
-    #[allow(dead_code)]
-    frame: &'a [u8],
+    _frame: &'a [u8],
 }
 
 // -----------------------------------------------------------------------------
@@ -44,7 +43,7 @@ impl<'a> SyncFrameObserver<'a> {
             return Err(NewSyncObserverError::UnexpectedLength);
         }
 
-        Ok(Self { frame })
+        Ok(Self { _frame: frame })
     }
 }
 

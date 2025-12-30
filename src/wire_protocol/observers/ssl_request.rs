@@ -10,8 +10,7 @@ const MESSAGE_CODE: u32 = 80877103;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SSLRequestFrameObserver<'a> {
-    #[allow(dead_code)]
-    frame: &'a [u8],
+    _frame: &'a [u8],
 }
 
 // -----------------------------------------------------------------------------
@@ -54,7 +53,7 @@ impl<'a> SSLRequestFrameObserver<'a> {
             return Err(NewSSLRequestObserverError::UnexpectedCode(code));
         }
 
-        Ok(Self { frame })
+        Ok(Self { _frame: frame })
     }
 }
 

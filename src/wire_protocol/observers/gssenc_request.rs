@@ -11,8 +11,7 @@ const MESSAGE_CODE: i32 = 80877104;
 
 #[derive(Clone, Copy, Debug)]
 pub struct GSSENCRequestFrameObserver<'a> {
-    #[allow(dead_code)]
-    frame: &'a [u8],
+    _frame: &'a [u8],
 }
 
 // -----------------------------------------------------------------------------
@@ -54,7 +53,7 @@ impl<'a> GSSENCRequestFrameObserver<'a> {
             return Err(NewGSSENCRequestObserverError::UnexpectedCode(code));
         }
 
-        Ok(Self { frame })
+        Ok(Self { _frame: frame })
     }
 }
 

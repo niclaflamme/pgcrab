@@ -12,11 +12,8 @@ impl GatewaySession {
             .await
             .map_err(|e| format!("failed to connect to backend: {}", e))?;
 
-        Ok(Self { backend })
-    }
-
-    #[allow(dead_code)]
-    pub fn backend_mut(&mut self) -> &mut BackendConnection {
-        &mut self.backend
+        let session = Self { backend };
+        let _ = session.backend.peer_addr();
+        Ok(session)
     }
 }
