@@ -88,7 +88,7 @@ mod tests {
         let len = CopyDataFrameObserver::peek(&frame).unwrap();
         assert_eq!(len, frame.len());
         let obs = CopyDataFrameObserver::new(&frame[..len]).unwrap();
-        assert_eq!(obs.data(), &[]);
+        assert_eq!(obs.data(), &b""[..]);
     }
 
     #[test]

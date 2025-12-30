@@ -89,7 +89,7 @@ mod tests {
         let len = GSSResponseFrameObserver::peek(&frame).unwrap();
         assert_eq!(len, frame.len());
         let obs = GSSResponseFrameObserver::new(&frame[..len]).unwrap();
-        assert_eq!(obs.gss_token(), &[]);
+        assert_eq!(obs.gss_token(), &b""[..]);
     }
 
     #[test]

@@ -17,12 +17,14 @@ pub async fn ensure_shards_accessible() {
         .await;
 }
 
+#[allow(dead_code)]
 pub fn reserve_port(host: &str) -> u16 {
     let addr = format!("{host}:0");
     let listener = TcpListener::bind(&addr).expect("bind ephemeral port");
     listener.local_addr().unwrap().port()
 }
 
+#[allow(dead_code)]
 pub fn spawn_pgcrab(host: &str, port: u16) -> std::process::Child {
     let exe = env!("CARGO_BIN_EXE_pgcrab");
     let config_path = std::env::var("PGCRAB_CONFIG_FILE").unwrap_or_else(|_| "pgcrab.toml".into());
@@ -35,6 +37,7 @@ pub fn spawn_pgcrab(host: &str, port: u16) -> std::process::Child {
         .expect("spawn pgcrab")
 }
 
+#[allow(dead_code)]
 pub async fn wait_for_listen(host: &str, port: u16) {
     let addr = format!("{host}:{port}");
     for _ in 0..50 {
