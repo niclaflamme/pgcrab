@@ -1,35 +1,43 @@
-# Plan: prewarm shard connections on boot
+# Plan: forward queries via pooled backend connections
 
 ## Goals
-- Maintain a per-shard pool with `min_connections` warmed on startup.
-- Enforce `max_connections` and reuse idle backend connections.
-- Keep frontend auth flow unchanged (backend connections still deferred until first query).
+- Acquire a backend connection on first frontend query.
+- Forward frontend messages to the backend and stream backend responses back.
+- Release the backend connection when the backend emits `ReadyForQuery`.
+- Keep protocol framing correct (no partial or merged frames).
 
 ## Data structures (where they live)
-- `backend`:
-  - Keep `BackendConnection` as the raw socket wrapper.
-  - Optional helper: `BackendConnector` with `connect(shard)` for single responsibility.
+- `frontend`:
+  - `FrontendContext` keeps `gateway_session: Option<GatewaySession>`.
+  - Add a small backend response tracker to parse message frames (tag + length).
 - `gateway`:
-  - `ShardPool`: holds shard config + idle queue + max permits.
-    - Fields: `shard: ShardRecord`, `idle: VecDeque<BackendConnection>`, `max: Semaphore`, `min: u32`.
-    - `acquire() -> PooledConnection` (uses permit + pulls/creates connection).
-    - `release(conn)` returns to idle queue (non-async path via channel).
-  - `GatewayPools`: `HashMap<String, Arc<ShardPool>>` keyed by shard name.
-    - `warm_all()` spawns tasks to reach `min_connections` per shard.
-- `main`:
-  - Build a shared `GatewayPools` after `Config::init`.
-  - Call `warm_all()` before accepting client connections.
-  - Pass `Arc<GatewayPools>` into `FrontendConnection::new`.
+  - `GatewaySession` wraps `PooledConnection` and provides `backend()` access.
+  - `GatewayPools` stays the source of pooled connections.
+- `backend`:
+  - Extend `BackendConnection` with buffer accessors: `buffer()`, `consume(n)`.
 
 ## Implementation steps
-1. Add pool structs in `src/gateway/pool.rs` and export from `src/gateway/mod.rs`.
-2. Implement `ShardPool::warm_min()` that opens connections until `idle.len() >= min`.
-3. Modify `GatewaySession::connect_to_shard` to accept a pool (or `GatewayPools`) and `acquire()`.
-4. Update `FrontendConnection::new` signature to accept `Arc<GatewayPools>`.
-5. In `main`, create `GatewayPools` from `Config::snapshot().shards` and call `warm_all()`.
-6. Add basic logging around pool warmup and connection failures.
+1. Add backend frame parsing helpers.
+   - Implement a `peek_backend(bytes) -> Option<(tag, len)>` utility.
+   - Minimal: parse `tag` + `i32 length` (length includes itself).
+2. Extend `BackendConnection` to expose its read buffer.
+   - Provide `buffer()` for read-only slice and `consume(n)` to advance.
+3. Add backend read branch to `FrontendConnection::serve`.
+   - When `gateway_session` is present, `select!` on backend read.
+   - For each complete backend frame, forward bytes to the frontend outbox.
+   - Detect `ReadyForQuery` (tag `Z`), then release the session.
+4. Forward frontend Ready-stage sequences to backend.
+   - In `handle_ready`, if session is missing, acquire a random pool.
+   - Write the frontend sequence bytes directly to `backend()`.
+5. Release the backend connection on ReadyForQuery.
+   - Drop `GatewaySession` (returning `PooledConnection` to the pool).
+   - Reset any backend tracker state.
+6. Error handling and safety.
+   - On backend read/write errors, send an `ErrorResponse` to the frontend and
+     clear `gateway_session`.
+   - Ensure no writes happen after a session is released.
 
 ## Validation
-- Unit: test `ShardPool` min/max enforcement (mock connector or loopback test).
-- Integration: existing auth flow should remain green.
-- Manual: verify startup creates backend connections even without client queries.
+- Add a unit test for `peek_backend` frame parsing.
+- Exercise a simple query in integration tests and ensure responses are forwarded.
+- Verify that backend connections return to the pool after `ReadyForQuery`.
