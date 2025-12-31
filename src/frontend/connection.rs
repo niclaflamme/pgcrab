@@ -3,17 +3,17 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::select;
 
+use crate::ErrorResponse;
 use crate::frontend::buffers::FrontendBuffers;
 use crate::frontend::context::FrontendContext;
 use crate::frontend::handlers;
+use crate::frontend::proxy_responses as responses;
 use crate::frontend::transport::FrontendTransport;
 use crate::gateway::GatewayPools;
-use crate::frontend::proxy_responses as responses;
-use crate::shared_types::ReadyStatus;
 use crate::shared_types::AuthStage;
-use crate::wire::utils::peek_backend;
-use crate::ErrorResponse;
+use crate::shared_types::ReadyStatus;
 use crate::tls;
+use crate::wire::utils::peek_backend;
 
 // -----------------------------------------------------------------------------
 // ----- FrontendConnection ----------------------------------------------------

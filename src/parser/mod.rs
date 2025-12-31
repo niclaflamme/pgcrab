@@ -1,11 +1,16 @@
-use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::num::NonZeroUsize;
+use std::sync::{Arc, OnceLock};
 
+use lru::LruCache;
+use parking_lot::RwLock;
 use pg_query::ParseResult;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::analytics;
+
+const DEFAULT_CACHE_CAPACITY: usize = 1024;
+static CACHE_CAPACITY: OnceLock<NonZeroUsize> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatementType {
@@ -48,8 +53,7 @@ impl std::error::Error for ParseError {}
 pub fn parse(query: &str) -> Result<ParsedQuery, ParseError> {
     let cache = parser_cache();
     let key = query.as_bytes();
-    let key_hash = hash_bytes(key);
-    if let Some(cached) = cache.get(key_hash, key) {
+    if let Some(cached) = cache.get(key) {
         analytics::inc_parse_cache_hit();
         debug!(cache = "hit", query_len = query.len(), "parser cache");
         return Ok((*cached).clone());
@@ -70,7 +74,7 @@ pub fn parse(query: &str) -> Result<ParsedQuery, ParseError> {
         ast: Arc::new(ast),
     };
 
-    let cached = cache.insert_if_missing(key_hash, key.to_vec(), Arc::new(parsed));
+    let cached = cache.insert_if_missing(key.to_vec(), Arc::new(parsed));
 
     Ok((*cached).clone())
 }
@@ -107,63 +111,86 @@ fn statement_type_for(ast: &ParseResult) -> StatementType {
 }
 
 #[derive(Debug)]
-struct CacheEntry {
-    key: Vec<u8>,
-    value: Arc<ParsedQuery>,
-}
-
-type CacheKey = [u8; 16];
-type CacheMap = HashMap<CacheKey, Vec<CacheEntry>>;
-
 struct ParserCache {
-    entries: RwLock<CacheMap>,
+    entries: RwLock<LruCache<Vec<u8>, Arc<ParsedQuery>>>,
 }
 
 impl ParserCache {
-    fn new() -> Self {
+    fn new(capacity: NonZeroUsize) -> Self {
         Self {
-            entries: RwLock::new(HashMap::new()),
+            entries: RwLock::new(LruCache::new(capacity)),
         }
     }
 
-    fn get(&self, key_hash: CacheKey, key: &[u8]) -> Option<Arc<ParsedQuery>> {
-        let guard = self.entries.read().expect("parser cache read lock poisoned");
-        let bucket = guard.get(&key_hash)?;
-        bucket
-            .iter()
-            .find(|entry| entry.key == key)
-            .map(|entry| entry.value.clone())
+    fn len(&self) -> usize {
+        self.entries.read().len()
     }
 
-    fn insert_if_missing(
-        &self,
-        key_hash: CacheKey,
-        key: Vec<u8>,
-        value: Arc<ParsedQuery>,
-    ) -> Arc<ParsedQuery> {
-        let mut guard = self
-            .entries
-            .write()
-            .expect("parser cache write lock poisoned");
-        let bucket = guard.entry(key_hash).or_default();
-        if let Some(existing) = bucket.iter().find(|entry| entry.key == key) {
-            return existing.value.clone();
+    fn capacity(&self) -> usize {
+        self.entries.read().cap().get()
+    }
+
+    fn get(&self, key: &[u8]) -> Option<Arc<ParsedQuery>> {
+        let mut cache = self.entries.write();
+        cache.get(key).cloned()
+    }
+
+    fn insert_if_missing(&self, key: Vec<u8>, value: Arc<ParsedQuery>) -> Arc<ParsedQuery> {
+        let mut cache = self.entries.write();
+        if let Some(existing) = cache.get(&key) {
+            return existing.clone();
         }
-        bucket.push(CacheEntry {
-            key,
-            value: value.clone(),
-        });
+
+        let was_full = cache.len() == cache.cap().get();
+        cache.put(key, value.clone());
+
+        if was_full {
+            analytics::inc_parse_cache_eviction();
+        }
         value
     }
 }
 
-fn parser_cache() -> &'static ParserCache {
-    static CACHE: OnceLock<ParserCache> = OnceLock::new();
-    CACHE.get_or_init(ParserCache::new)
+#[derive(Debug, Clone, Copy)]
+pub struct CacheStats {
+    pub len: usize,
+    pub capacity: usize,
 }
 
-fn hash_bytes(bytes: &[u8]) -> CacheKey {
-    md5::compute(bytes).0
+pub fn cache_stats() -> CacheStats {
+    let cache = parser_cache();
+    CacheStats {
+        len: cache.len(),
+        capacity: cache.capacity(),
+    }
+}
+
+pub fn init_cache(capacity: usize) {
+    let requested = NonZeroUsize::new(capacity)
+        .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_CACHE_CAPACITY).expect("default capacity"));
+
+    if let Some(existing) = CACHE_CAPACITY.get() {
+        if existing.get() != requested.get() {
+            warn!(
+                previous = existing.get(),
+                requested = requested.get(),
+                "parser cache capacity already set; keeping existing"
+            );
+        }
+        return;
+    }
+
+    let _ = CACHE_CAPACITY.set(requested);
+}
+
+fn cache_capacity() -> NonZeroUsize {
+    *CACHE_CAPACITY
+        .get_or_init(|| NonZeroUsize::new(DEFAULT_CACHE_CAPACITY).expect("default capacity"))
+}
+
+fn parser_cache() -> &'static ParserCache {
+    static CACHE: OnceLock<ParserCache> = OnceLock::new();
+    CACHE.get_or_init(|| ParserCache::new(cache_capacity()))
 }
 
 #[cfg(test)]
@@ -219,5 +246,44 @@ mod tests {
         let parsed_one = parse("SELECT * FROM cache_exact").expect("parse cache exact 1");
         let parsed_two = parse("SELECT  * FROM cache_exact").expect("parse cache exact 2");
         assert!(!Arc::ptr_eq(&parsed_one.ast, &parsed_two.ast));
+    }
+
+    #[test]
+    fn cache_evicts_least_recently_used() {
+        analytics::reset_parse_cache_counts();
+        let cache = ParserCache::new(NonZeroUsize::new(2).unwrap());
+
+        let first = Arc::new(ParsedQuery {
+            statement_type: StatementType::Select,
+            tables: vec!["a".to_string()],
+            ast: Arc::new(pg_query::parse("SELECT 1").unwrap()),
+        });
+
+        let second = Arc::new(ParsedQuery {
+            statement_type: StatementType::Select,
+            tables: vec!["b".to_string()],
+            ast: Arc::new(pg_query::parse("SELECT 2").unwrap()),
+        });
+
+        let third = Arc::new(ParsedQuery {
+            statement_type: StatementType::Select,
+            tables: vec!["c".to_string()],
+            ast: Arc::new(pg_query::parse("SELECT 3").unwrap()),
+        });
+
+        cache.insert_if_missing(b"one".to_vec(), first.clone());
+        cache.insert_if_missing(b"two".to_vec(), second.clone());
+        assert_eq!(cache.len(), 2);
+
+        cache.get(b"one");
+        cache.insert_if_missing(b"three".to_vec(), third.clone());
+
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(b"one").is_some());
+        assert!(cache.get(b"two").is_none());
+        assert!(cache.get(b"three").is_some());
+
+        let stats = analytics::snapshot();
+        assert_eq!(stats.evictions, 1);
     }
 }

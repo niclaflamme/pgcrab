@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use pgcrab::{
     Config, FrontendConnection, admin, config::shards::ShardsConfig, config::types::LogLevel,
-    gateway::GatewayPools,
+    gateway::GatewayPools, parser,
 };
 
 // -----------------------------------------------------------------------------
@@ -50,7 +50,15 @@ async fn setup(args: &ServeArgs) {
     must_exist_file(&args.config_file, "--config / pgcrab.toml");
 
     let listen_addr = SocketAddr::from((args.host, args.port));
-    Config::init(listen_addr, args.log_level.clone(), args.config_file.clone()).await;
+    Config::init(
+        listen_addr,
+        args.log_level.clone(),
+        args.parser_cache_capacity,
+        args.config_file.clone(),
+    )
+    .await;
+
+    parser::init_cache(args.parser_cache_capacity);
 
     init_tracing();
 }
@@ -134,6 +142,13 @@ struct Args {
     #[arg(long = "log", default_value = "info")]
     log_level: LogLevel,
 
+    #[arg(
+        long = "parser-cache-capacity",
+        env = "PGCRAB_PARSER_CACHE_CAPACITY",
+        default_value_t = 1024
+    )]
+    parser_cache_capacity: usize,
+
     // Must exist; no defaults.
     #[arg(long = "config", env = "PGCRAB_CONFIG_FILE")]
     config_file: Option<PathBuf>,
@@ -160,6 +175,7 @@ struct ServeArgs {
     host: IpAddr,
     port: u16,
     log_level: LogLevel,
+    parser_cache_capacity: usize,
     config_file: PathBuf,
 }
 
@@ -169,6 +185,10 @@ impl Args {
             host: expect_arg(self.host, "host", "--host / PGCRAB_HOST"),
             port: expect_arg(self.port, "port", "--port / PGCRAB_PORT"),
             log_level: self.log_level,
+            parser_cache_capacity: expect_positive(
+                self.parser_cache_capacity,
+                "parser-cache-capacity",
+            ),
             config_file: expect_arg(self.config_file, "config", "--config / PGCRAB_CONFIG_FILE"),
         }
     }
@@ -176,6 +196,13 @@ impl Args {
 
 fn expect_arg<T>(value: Option<T>, name: &str, hint: &str) -> T {
     value.unwrap_or_else(|| panic!("missing required {name} (from {hint})"))
+}
+
+fn expect_positive(value: usize, name: &str) -> usize {
+    if value == 0 {
+        panic!("{name} must be greater than zero");
+    }
+    value
 }
 
 fn must_exist_file(path: &Path, hint: &str) {

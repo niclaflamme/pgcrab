@@ -1,7 +1,7 @@
 use std::error::Error as StdError;
 use std::fmt;
 
-use crate::wire::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+use crate::wire::utils::{TaggedFrameError, parse_tagged_frame, peek_tagged_frame};
 // -----------------------------------------------------------------------------
 // ----- SyncFrameObserver -----------------------------------------------------
 

@@ -1,9 +1,19 @@
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::analytics::{self, ParseCacheStats};
+use crate::analytics;
 use crate::frontend::context::FrontendContext;
 use crate::gateway::GatewayPools;
+use crate::parser;
 use crate::shared_types::AuthStage;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub len: usize,
+    pub capacity: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdminCommand {
@@ -12,14 +22,23 @@ pub enum AdminCommand {
     ShowSession,
 }
 
-pub fn parse_cache_stats() -> ParseCacheStats {
-    analytics::snapshot()
+pub fn parse_cache_stats() -> CacheStats {
+    let counters = analytics::snapshot();
+    let cache = parser::cache_stats();
+
+    CacheStats {
+        hits: counters.hits,
+        misses: counters.misses,
+        evictions: counters.evictions,
+        len: cache.len,
+        capacity: cache.capacity,
+    }
 }
 
-pub fn format_parse_cache_stats(stats: ParseCacheStats) -> String {
+pub fn format_parse_cache_stats(stats: CacheStats) -> String {
     format!(
-        "parse_cache_hits={}\nparse_cache_misses={}",
-        stats.hits, stats.misses
+        "parse_cache_hits={}\nparse_cache_misses={}\nparse_cache_evictions={}\nparse_cache_size={}\nparse_cache_capacity={}",
+        stats.hits, stats.misses, stats.evictions, stats.len, stats.capacity
     )
 }
 
@@ -57,10 +76,13 @@ pub(crate) async fn command_responses(
 }
 
 fn analytics_responses() -> Vec<Bytes> {
-    let stats = analytics::snapshot();
+    let stats = parse_cache_stats();
     let rows = [
         ("parse_cache_hits", stats.hits.to_string()),
         ("parse_cache_misses", stats.misses.to_string()),
+        ("parse_cache_evictions", stats.evictions.to_string()),
+        ("parse_cache_size", stats.len.to_string()),
+        ("parse_cache_capacity", stats.capacity.to_string()),
     ];
 
     let mut responses = Vec::with_capacity(2 + rows.len());
@@ -75,7 +97,16 @@ fn analytics_responses() -> Vec<Bytes> {
 async fn pools_responses(pools: &GatewayPools) -> Vec<Bytes> {
     let stats = pools.snapshot().await;
     let row_count = stats.len();
-    let columns = ["name", "host", "port", "min", "max", "idle", "in_use", "available"];
+    let columns = [
+        "name",
+        "host",
+        "port",
+        "min",
+        "max",
+        "idle",
+        "in_use",
+        "available",
+    ];
 
     let mut responses = Vec::with_capacity(2 + stats.len());
     responses.push(row_description(&columns));
@@ -182,10 +213,10 @@ fn command_complete(tag: &str) -> Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
     use crate::config::shards::ShardRecord;
     use crate::frontend::context::FrontendContext;
     use crate::shared_types::{AuthStage, BackendIdentity};
+    use bytes::Bytes;
     use secrecy::SecretString;
 
     #[test]
@@ -222,7 +253,16 @@ mod tests {
 
         assert_eq!(responses.len(), 3);
         assert_eq!(responses[0][0], b'T');
-        for column in ["name", "host", "port", "min", "max", "idle", "in_use", "available"] {
+        for column in [
+            "name",
+            "host",
+            "port",
+            "min",
+            "max",
+            "idle",
+            "in_use",
+            "available",
+        ] {
             assert!(contains_bytes(&responses[0], column.as_bytes()));
         }
         assert_eq!(responses[1][0], b'D');

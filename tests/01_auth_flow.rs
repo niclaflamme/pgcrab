@@ -13,10 +13,7 @@ async fn auth_flow_accepts_valid_user() {
         .expect("expected at least one [[shards]] entry");
     let users = cfg.users;
 
-    assert!(
-        !users.is_empty(),
-        "expected at least one [[users]] entry"
-    );
+    assert!(!users.is_empty(), "expected at least one [[users]] entry");
 
     let port = support::reserve_port(&shard.host);
     let mut child = support::spawn_pgcrab(&shard.host, port);

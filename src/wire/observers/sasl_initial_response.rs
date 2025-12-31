@@ -1,7 +1,7 @@
 use memchr::memchr;
 use std::{fmt, str};
 
-use crate::wire::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+use crate::wire::utils::{TaggedFrameError, parse_tagged_frame, peek_tagged_frame};
 
 // -----------------------------------------------------------------------------
 // ----- SASLInitialResponseFrameObserver --------------------------------------
@@ -55,9 +55,9 @@ impl<'a> SASLInitialResponseFrameObserver<'a> {
 
         let initial_response_start = pos;
         if initial_response_len == -1 {
-        if pos != meta.total_len {
-            return Err(NewSASLInitialResponseObserverError::UnexpectedLength);
-        }
+            if pos != meta.total_len {
+                return Err(NewSASLInitialResponseObserverError::UnexpectedLength);
+            }
         } else if initial_response_len < 0 {
             return Err(NewSASLInitialResponseObserverError::InvalidLength(
                 initial_response_len,

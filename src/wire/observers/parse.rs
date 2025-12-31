@@ -1,7 +1,7 @@
 use memchr::memchr;
 use std::{fmt, str};
 
-use crate::wire::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+use crate::wire::utils::{TaggedFrameError, parse_tagged_frame, peek_tagged_frame};
 
 // -----------------------------------------------------------------------------
 // ----- ParseFrameObserver ----------------------------------------------------
@@ -43,15 +43,15 @@ impl<'a> ParseFrameObserver<'a> {
         let mut pos = 5;
 
         // statement
-        let rel = memchr(0, &frame[pos..meta.total_len])
-            .ok_or(NewParseObserverError::UnexpectedEof)?;
+        let rel =
+            memchr(0, &frame[pos..meta.total_len]).ok_or(NewParseObserverError::UnexpectedEof)?;
         let statement =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewParseObserverError::InvalidUtf8)?;
         pos += rel + 1;
 
         // query
-        let rel = memchr(0, &frame[pos..meta.total_len])
-            .ok_or(NewParseObserverError::UnexpectedEof)?;
+        let rel =
+            memchr(0, &frame[pos..meta.total_len]).ok_or(NewParseObserverError::UnexpectedEof)?;
         let query =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewParseObserverError::InvalidUtf8)?;
         pos += rel + 1;

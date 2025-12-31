@@ -3,7 +3,7 @@
 use memchr::memchr;
 use std::{fmt, str};
 
-use crate::wire::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+use crate::wire::utils::{TaggedFrameError, parse_tagged_frame, peek_tagged_frame};
 
 // -----------------------------------------------------------------------------
 // ----- BindFrameObserver -----------------------------------------------------
@@ -61,15 +61,15 @@ impl<'a> BindFrameObserver<'a> {
         let mut pos = 5;
 
         // portal
-        let rel = memchr(0, &frame[pos..meta.total_len])
-            .ok_or(NewBindObserverError::UnexpectedEof)?;
+        let rel =
+            memchr(0, &frame[pos..meta.total_len]).ok_or(NewBindObserverError::UnexpectedEof)?;
         let portal =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewBindObserverError::InvalidUtf8)?;
         pos += rel + 1;
 
         // statement
-        let rel = memchr(0, &frame[pos..meta.total_len])
-            .ok_or(NewBindObserverError::UnexpectedEof)?;
+        let rel =
+            memchr(0, &frame[pos..meta.total_len]).ok_or(NewBindObserverError::UnexpectedEof)?;
         let statement =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewBindObserverError::InvalidUtf8)?;
         pos += rel + 1;

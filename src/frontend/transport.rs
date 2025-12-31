@@ -1,8 +1,8 @@
 use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
 
 // -----------------------------------------------------------------------------
 // ----- FrontendTransport -----------------------------------------------------
@@ -40,10 +40,7 @@ impl FrontendTransport {
         }
     }
 
-    pub(crate) async fn upgrade_to_tls(
-        &mut self,
-        acceptor: &TlsAcceptor,
-    ) -> std::io::Result<()> {
+    pub(crate) async fn upgrade_to_tls(&mut self, acceptor: &TlsAcceptor) -> std::io::Result<()> {
         let FrontendTransport::Plain(stream) = self else {
             return Ok(());
         };

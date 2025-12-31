@@ -1,8 +1,8 @@
-use bytes::{Bytes, BytesMut};
-use crate::frontend::transport::FrontendTransport;
 use crate::frontend::sequence_tracker::SequenceTracker;
+use crate::frontend::transport::FrontendTransport;
 use crate::shared_types::AuthStage;
 use crate::wire::utils::peek_frontend;
+use bytes::{Bytes, BytesMut};
 
 // -----------------------------------------------------------------------------
 // ----- Constants -------------------------------------------------------------

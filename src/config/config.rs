@@ -20,6 +20,7 @@ static CONFIG: OnceLock<Arc<RwLock<Config>>> = OnceLock::new();
 pub struct Config {
     pub listen_addr: SocketAddr,
     pub log_level: LogLevel,
+    pub parser_cache_capacity: usize,
     pub users: &'static UsersConfig,
     pub shards: &'static ShardsConfig,
 }
@@ -29,7 +30,12 @@ pub struct Config {
 
 impl Config {
     /// Async because UsersConfig::init() is async (non-blocking IO).
-    pub async fn init(listen_addr: SocketAddr, log_level: LogLevel, config_path: PathBuf) {
+    pub async fn init(
+        listen_addr: SocketAddr,
+        log_level: LogLevel,
+        parser_cache_capacity: usize,
+        config_path: PathBuf,
+    ) {
         CONFIG_FILE_PATH
             .set(config_path)
             .unwrap_or_else(|_| panic!("Config::init called twice"));
@@ -38,13 +44,18 @@ impl Config {
         UsersConfig::init(path).await;
         ShardsConfig::init(path).await;
 
-        Self::load(listen_addr, log_level).await;
+        Self::load(listen_addr, log_level, parser_cache_capacity).await;
     }
 
     /// Pure in-memory reload. Call this after you've reloaded sub-configs.
     pub async fn reload() {
         let current = Self::snapshot();
-        Self::load(current.listen_addr, current.log_level).await;
+        Self::load(
+            current.listen_addr,
+            current.log_level,
+            current.parser_cache_capacity,
+        )
+        .await;
     }
 
     pub fn snapshot() -> Config {
@@ -56,7 +67,7 @@ impl Config {
 // ----- Config: Private -------------------------------------------------------
 
 impl Config {
-    async fn load(listen_addr: SocketAddr, log_level: LogLevel) {
+    async fn load(listen_addr: SocketAddr, log_level: LogLevel, parser_cache_capacity: usize) {
         let users = UsersConfig::handle();
         let shards = ShardsConfig::handle();
 
@@ -67,6 +78,7 @@ impl Config {
         let next = Config {
             listen_addr,
             log_level,
+            parser_cache_capacity,
             users,
             shards,
         };
