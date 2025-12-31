@@ -12,9 +12,9 @@ use crate::frontend::proxy_responses as responses;
 use crate::gateway::GatewayPools;
 use crate::gateway::GatewaySession;
 use crate::parser;
-use crate::shared_types::StatementSignature;
 use crate::shared_types::AuthStage;
 use crate::shared_types::ReadyStatus;
+use crate::shared_types::StatementSignature;
 use crate::wire::observers::bind::BindFrameObserver;
 use crate::wire::observers::close::{CloseFrameObserver, CloseTarget};
 use crate::wire::observers::describe::{DescribeFrameObserver, DescribeTarget};
@@ -33,11 +33,12 @@ pub(crate) async fn handle_ready(
     sequence: BytesMut,
     pools: &GatewayPools,
 ) {
-    if context.is_admin && try_handle_admin_sequence(buffers, &sequence) {
+    if context.is_admin && try_handle_admin_sequence(context, buffers, &sequence, pools).await {
         return;
     }
 
     if context.gateway_session.is_none() {
+        context.current_pool = None;
         let Some(pool) = pools.random_pool() else {
             let err = ErrorResponse::internal_error("no backend shards available");
             buffers.queue_response(&err.to_bytes());
@@ -48,6 +49,7 @@ pub(crate) async fn handle_ready(
         match GatewaySession::from_pool(&pool).await {
             Ok(session) => {
                 context.gateway_session = Some(session);
+                context.current_pool = Some(pool.name().to_string());
             }
             Err(err) => {
                 let error = ErrorResponse::internal_error(err);
@@ -69,6 +71,7 @@ pub(crate) async fn handle_ready(
         buffers.queue_response(&error.to_bytes());
         buffers.queue_response(&responses::ready_with_status(ReadyStatus::Idle));
         context.gateway_session = None;
+        context.current_pool = None;
         context.pending_parses.clear();
         context.pending_syncs = 0;
         context.virtual_portals.clear();
@@ -78,7 +81,12 @@ pub(crate) async fn handle_ready(
     context.gateway_session = Some(session);
 }
 
-fn try_handle_admin_sequence(buffers: &mut FrontendBuffers, sequence: &[u8]) -> bool {
+async fn try_handle_admin_sequence(
+    context: &FrontendContext,
+    buffers: &mut FrontendBuffers,
+    sequence: &[u8],
+    pools: &GatewayPools,
+) -> bool {
     let Some(peek) = peek_frontend(AuthStage::Ready, sequence) else {
         return false;
     };
@@ -99,10 +107,12 @@ fn try_handle_admin_sequence(buffers: &mut FrontendBuffers, sequence: &[u8]) -> 
         return false;
     };
 
-    for response in admin::command_responses(command) {
+    for response in admin::command_responses(command, context, pools).await {
         buffers.queue_response(&response);
     }
+
     buffers.queue_response(&responses::ready_with_status(ReadyStatus::Idle));
+
     true
 }
 
@@ -244,7 +254,9 @@ fn handle_parse_frame(
     }
 
     let generation = match context.virtual_statements.get(statement) {
-        Some(existing) if existing.signature == signature && !existing.closed => existing.generation,
+        Some(existing) if existing.signature == signature && !existing.closed => {
+            existing.generation
+        }
         Some(existing) => existing.generation.saturating_add(1),
         None => 1,
     };
@@ -415,13 +427,19 @@ fn handle_describe_frame(
         DescribeTarget::Statement => {
             let name = observer.name();
             let Some(virtual_statement) = context.virtual_statements.get(name) else {
-                debug!(statement = name, "Describe references unknown prepared statement");
+                debug!(
+                    statement = name,
+                    "Describe references unknown prepared statement"
+                );
                 output.extend_from_slice(frame);
                 return;
             };
 
             if virtual_statement.closed {
-                debug!(statement = name, "Describe references closed prepared statement");
+                debug!(
+                    statement = name,
+                    "Describe references closed prepared statement"
+                );
                 output.extend_from_slice(frame);
                 return;
             }
@@ -497,13 +515,10 @@ fn handle_close_frame(
     match observer.target() {
         CloseTarget::Statement => {
             let name = observer.name();
-            let signature = context
-                .virtual_statements
-                .get_mut(name)
-                .map(|statement| {
-                    statement.closed = true;
-                    statement.signature
-                });
+            let signature = context.virtual_statements.get_mut(name).map(|statement| {
+                statement.closed = true;
+                statement.signature
+            });
             if let Some(signature) = signature {
                 let backend_name = session
                     .backend()

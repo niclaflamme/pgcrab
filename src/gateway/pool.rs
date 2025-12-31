@@ -16,6 +16,18 @@ pub struct GatewayPools {
     pools: HashMap<String, Arc<ShardPool>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PoolStats {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub min: u32,
+    pub max: u32,
+    pub idle: usize,
+    pub in_use: usize,
+    pub available: usize,
+}
+
 impl GatewayPools {
     pub fn new(shards: Vec<ShardRecord>) -> Self {
         let mut pools = HashMap::with_capacity(shards.len());
@@ -36,6 +48,15 @@ impl GatewayPools {
         self.pools.values().choose(&mut rng).cloned()
     }
 
+    pub async fn snapshot(&self) -> Vec<PoolStats> {
+        let mut stats = Vec::with_capacity(self.pools.len());
+        for pool in self.pools.values() {
+            stats.push(pool.stats().await);
+        }
+        stats.sort_by(|a, b| a.name.cmp(&b.name));
+        stats
+    }
+
     pub async fn warm_all(&self) {
         for pool in self.pools.values() {
             pool.warm_min().await;
@@ -52,6 +73,7 @@ pub struct ShardPool {
     idle: Mutex<VecDeque<IdleConnection>>,
     max: Arc<Semaphore>,
     min: u32,
+    max_connections: u32,
 }
 
 impl ShardPool {
@@ -63,6 +85,29 @@ impl ShardPool {
             idle: Mutex::new(VecDeque::new()),
             max: Arc::new(Semaphore::new(max as usize)),
             min,
+            max_connections: max,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.shard.shard_name
+    }
+
+    pub async fn stats(&self) -> PoolStats {
+        let idle = self.idle.lock().await.len();
+        let available = self.max.available_permits();
+        let max = self.max_connections as usize;
+        let in_use = max.saturating_sub(available).saturating_sub(idle);
+
+        PoolStats {
+            name: self.shard.shard_name.clone(),
+            host: self.shard.host.clone(),
+            port: self.shard.port,
+            min: self.min,
+            max: self.max_connections,
+            idle,
+            in_use,
+            available,
         }
     }
 
