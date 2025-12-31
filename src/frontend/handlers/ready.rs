@@ -1,6 +1,7 @@
 use bytes::{BufMut, BytesMut};
 use memchr::memchr;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::debug;
 
 use crate::ErrorResponse;
@@ -255,11 +256,14 @@ fn handle_parse_frame(
         }
     }
 
+    let query = Arc::<str>::from(observer.query());
+    let param_type_oids = Arc::<[i32]>::from(param_type_oids);
+
     context.virtual_statements.insert(
         statement.to_string(),
         VirtualStatement {
             generation,
-            query: observer.query().to_string(),
+            query: query.clone(),
             param_type_oids: param_type_oids.clone(),
             signature,
             closed: false,
@@ -267,7 +271,11 @@ fn handle_parse_frame(
     );
 
     let backend_statement_name = session.backend().allocate_statement_name();
-    let injected = build_parse_frame(&backend_statement_name, observer.query(), &param_type_oids);
+    let injected = build_parse_frame(
+        &backend_statement_name,
+        query.as_ref(),
+        param_type_oids.as_ref(),
+    );
     output.extend_from_slice(&injected);
     context.pending_parses.push_back(PendingParse {
         signature: Some(signature),
@@ -285,8 +293,8 @@ fn ensure_prepared(
     context: &mut FrontendContext,
     session: &mut GatewaySession,
     signature: StatementSignature,
-    query: &str,
-    param_type_oids: &[i32],
+    query: &Arc<str>,
+    param_type_oids: &Arc<[i32]>,
     output: &mut BytesMut,
     in_flight_prepares: &mut HashMap<StatementSignature, String>,
     suppress_response: bool,
@@ -304,7 +312,11 @@ fn ensure_prepared(
     }
 
     let backend_statement_name = session.backend().allocate_statement_name();
-    let injected = build_parse_frame(&backend_statement_name, query, param_type_oids);
+    let injected = build_parse_frame(
+        &backend_statement_name,
+        query.as_ref(),
+        param_type_oids.as_ref(),
+    );
     output.extend_from_slice(&injected);
     context.pending_parses.push_back(PendingParse {
         signature: Some(signature),
@@ -349,15 +361,12 @@ fn handle_bind_frame(
     }
 
     let signature = virtual_statement.signature;
-    let query = virtual_statement.query.clone();
-    let param_type_oids = virtual_statement.param_type_oids.clone();
-
     let prepared = ensure_prepared(
         context,
         session,
         signature,
-        &query,
-        &param_type_oids,
+        &virtual_statement.query,
+        &virtual_statement.param_type_oids,
         output,
         in_flight_prepares,
         true,
@@ -413,15 +422,12 @@ fn handle_describe_frame(
             }
 
             let signature = virtual_statement.signature;
-            let query = virtual_statement.query.clone();
-            let param_type_oids = virtual_statement.param_type_oids.clone();
-
             let prepared = ensure_prepared(
                 context,
                 session,
                 signature,
-                &query,
-                &param_type_oids,
+                &virtual_statement.query,
+                &virtual_statement.param_type_oids,
                 output,
                 in_flight_prepares,
                 true,
@@ -619,10 +625,9 @@ fn is_reset_query(query: &str) -> bool {
         return false;
     }
 
-    match trimmed.to_ascii_uppercase().as_str() {
-        "DISCARD ALL" | "DEALLOCATE ALL" | "RESET ALL" => true,
-        _ => false,
-    }
+    trimmed.eq_ignore_ascii_case("DISCARD ALL")
+        || trimmed.eq_ignore_ascii_case("DEALLOCATE ALL")
+        || trimmed.eq_ignore_ascii_case("RESET ALL")
 }
 
 // -----------------------------------------------------------------------------

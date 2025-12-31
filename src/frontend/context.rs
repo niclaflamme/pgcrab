@@ -1,5 +1,6 @@
 use secrecy::ExposeSecret;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use crate::config::users::UsersConfig;
 use crate::gateway::GatewaySession;
@@ -18,8 +19,8 @@ pub(crate) struct PendingParse {
 #[derive(Debug, Clone)]
 pub(crate) struct VirtualStatement {
     pub(crate) generation: u64,
-    pub(crate) query: String,
-    pub(crate) param_type_oids: Vec<i32>,
+    pub(crate) query: Arc<str>,
+    pub(crate) param_type_oids: Arc<[i32]>,
     pub(crate) signature: StatementSignature,
     pub(crate) closed: bool,
 }
