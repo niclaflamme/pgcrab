@@ -3,21 +3,30 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::config::users::UsersConfig;
 use crate::gateway::GatewaySession;
-use crate::shared_types::{AuthStage, BackendIdentity};
+use crate::shared_types::{AuthStage, BackendIdentity, StatementSignature};
 
 // -----------------------------------------------------------------------------
 // ----- FrontendContext -------------------------------------------------------
 
-#[derive(Debug, Clone)]
-pub(crate) struct PreparedStatement {
-    pub(crate) query: String,
-    pub(crate) param_type_oids: Vec<i32>,
-}
-
 #[derive(Debug)]
 pub(crate) struct PendingParse {
-    pub(crate) name: Option<String>,
+    pub(crate) signature: Option<StatementSignature>,
+    pub(crate) backend_statement_name: Option<String>,
     pub(crate) suppress_response: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VirtualStatement {
+    pub(crate) generation: u64,
+    pub(crate) query: String,
+    pub(crate) param_type_oids: Vec<i32>,
+    pub(crate) signature: StatementSignature,
+    pub(crate) closed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PortalBinding {
+    pub(crate) backend_portal_name: String,
 }
 
 #[derive(Debug)]
@@ -28,8 +37,10 @@ pub(crate) struct FrontendContext {
     pub(crate) gateway_session: Option<GatewaySession>,
     pub(crate) stage: AuthStage,
     pub(crate) is_admin: bool,
-    pub(crate) prepared_statements: HashMap<String, PreparedStatement>,
+    pub(crate) virtual_statements: HashMap<String, VirtualStatement>,
+    pub(crate) virtual_portals: HashMap<String, PortalBinding>,
     pub(crate) pending_parses: VecDeque<PendingParse>,
+    pub(crate) pending_syncs: usize,
     close_after_flush: bool,
     upgrade_to_tls: bool,
 }
@@ -43,8 +54,10 @@ impl FrontendContext {
             gateway_session: None,
             stage: AuthStage::Startup,
             is_admin: false,
-            prepared_statements: HashMap::new(),
+            virtual_statements: HashMap::new(),
+            virtual_portals: HashMap::new(),
             pending_parses: VecDeque::new(),
+            pending_syncs: 0,
             close_after_flush: false,
             upgrade_to_tls: false,
         }

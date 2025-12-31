@@ -147,7 +147,6 @@ impl ShardPool {
             );
             return;
         }
-        conn.prepared_clear();
         let mut idle = self.idle.lock().await;
         idle.push_back(IdleConnection { conn, permit });
     }

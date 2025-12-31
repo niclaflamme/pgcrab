@@ -1,15 +1,20 @@
 use bytes::{Buf, BufMut, BytesMut};
-use std::{collections::HashSet, net::SocketAddr};
+use std::{collections::HashMap, net::SocketAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::shared_types::StatementSignature;
 use crate::wire::utils::peek_backend;
 
 #[derive(Debug)]
 pub struct BackendConnection {
     stream: TcpStream,
     buffer: BytesMut,
-    prepared: HashSet<String>,
+    prepared_by_signature: HashMap<StatementSignature, String>,
+    signature_by_name: HashMap<String, StatementSignature>,
+    epoch: u64,
+    next_statement_id: u64,
+    next_portal_id: u64,
 }
 
 impl BackendConnection {
@@ -21,7 +26,11 @@ impl BackendConnection {
         Ok(Self {
             stream,
             buffer: BytesMut::with_capacity(8192),
-            prepared: HashSet::new(),
+            prepared_by_signature: HashMap::new(),
+            signature_by_name: HashMap::new(),
+            epoch: 0,
+            next_statement_id: 0,
+            next_portal_id: 0,
         })
     }
 
@@ -67,6 +76,7 @@ impl BackendConnection {
                         if saw_error {
                             return Err("backend reset error response".to_string());
                         }
+                        self.prepared_reset();
                         return Ok(());
                     }
                     _ => {}
@@ -84,20 +94,43 @@ impl BackendConnection {
         }
     }
 
-    pub fn prepared_contains(&self, name: &str) -> bool {
-        self.prepared.contains(name)
+    pub fn prepared_lookup(&self, signature: &StatementSignature) -> Option<&str> {
+        self.prepared_by_signature
+            .get(signature)
+            .map(|name| name.as_str())
     }
 
-    pub fn prepared_insert(&mut self, name: String) {
-        self.prepared.insert(name);
+    pub fn prepared_insert(&mut self, signature: StatementSignature, name: String) {
+        if let Some(existing) = self.prepared_by_signature.insert(signature, name.clone()) {
+            self.signature_by_name.remove(&existing);
+        }
+        self.signature_by_name.insert(name, signature);
     }
 
-    pub fn prepared_remove(&mut self, name: &str) {
-        self.prepared.remove(name);
+    pub fn prepared_remove_name(&mut self, name: &str) {
+        if let Some(signature) = self.signature_by_name.remove(name) {
+            self.prepared_by_signature.remove(&signature);
+        }
     }
 
-    pub fn prepared_clear(&mut self) {
-        self.prepared.clear();
+    pub fn prepared_reset(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.next_statement_id = 0;
+        self.next_portal_id = 0;
+        self.prepared_by_signature.clear();
+        self.signature_by_name.clear();
+    }
+
+    pub fn allocate_statement_name(&mut self) -> String {
+        let id = self.next_statement_id;
+        self.next_statement_id = self.next_statement_id.wrapping_add(1);
+        format!("ps_{}_{}", self.epoch, id)
+    }
+
+    pub fn allocate_portal_name(&mut self) -> String {
+        let id = self.next_portal_id;
+        self.next_portal_id = self.next_portal_id.wrapping_add(1);
+        format!("pt_{}", id)
     }
 
     pub async fn startup(

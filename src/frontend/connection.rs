@@ -224,9 +224,14 @@ impl FrontendConnection {
             return Ok(true);
         }
 
-        let (pending_parses, gateway_session) = {
+        let (pending_parses, pending_syncs, virtual_portals, gateway_session) = {
             let context = &mut self.context;
-            (&mut context.pending_parses, &mut context.gateway_session)
+            (
+                &mut context.pending_parses,
+                &mut context.pending_syncs,
+                &mut context.virtual_portals,
+                &mut context.gateway_session,
+            )
         };
 
         let Some(session) = gateway_session.as_mut() else {
@@ -234,7 +239,7 @@ impl FrontendConnection {
         };
 
         let backend = session.backend();
-        let mut saw_ready = false;
+        let mut release_session = false;
         loop {
             let (tag, total_len, frame) = {
                 let buffer = backend.buffer();
@@ -252,8 +257,10 @@ impl FrontendConnection {
             match tag {
                 b'1' => {
                     if let Some(pending) = pending_parses.pop_front() {
-                        if let Some(name) = pending.name {
-                            backend.prepared_insert(name);
+                        if let (Some(signature), Some(name)) =
+                            (pending.signature, pending.backend_statement_name)
+                        {
+                            backend.prepared_insert(signature, name);
                         }
                         if pending.suppress_response {
                             forward = false;
@@ -262,6 +269,15 @@ impl FrontendConnection {
                 }
                 b'E' => {
                     pending_parses.clear();
+                    virtual_portals.clear();
+                }
+                b'Z' => {
+                    if *pending_syncs > 0 {
+                        *pending_syncs -= 1;
+                    }
+                    if *pending_syncs == 0 {
+                        release_session = true;
+                    }
                 }
                 _ => {}
             }
@@ -269,15 +285,13 @@ impl FrontendConnection {
             if forward {
                 self.buffers.queue_response(&frame);
             }
-
-            if tag == b'Z' {
-                saw_ready = true;
-            }
         }
 
-        if saw_ready {
+        if release_session {
             *gateway_session = None;
             pending_parses.clear();
+            *pending_syncs = 0;
+            virtual_portals.clear();
             self.backend_tracker.reset();
         }
 
@@ -293,6 +307,8 @@ impl FrontendConnection {
             .queue_response(&responses::ready_with_status(ReadyStatus::Idle));
         self.context.gateway_session = None;
         self.context.pending_parses.clear();
+        self.context.pending_syncs = 0;
+        self.context.virtual_portals.clear();
         self.backend_tracker.reset();
     }
 }
