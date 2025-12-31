@@ -363,12 +363,14 @@ fn handle_bind_frame(
     }
 
     let signature = virtual_statement.signature;
+    let query = Arc::clone(&virtual_statement.query);
+    let param_type_oids = Arc::clone(&virtual_statement.param_type_oids);
     let prepared = ensure_prepared(
         context,
         session,
         signature,
-        &virtual_statement.query,
-        &virtual_statement.param_type_oids,
+        &query,
+        &param_type_oids,
         output,
         in_flight_prepares,
         true,
@@ -425,12 +427,14 @@ fn handle_describe_frame(
             }
 
             let signature = virtual_statement.signature;
+            let query = Arc::clone(&virtual_statement.query);
+            let param_type_oids = Arc::clone(&virtual_statement.param_type_oids);
             let prepared = ensure_prepared(
                 context,
                 session,
                 signature,
-                &virtual_statement.query,
-                &virtual_statement.param_type_oids,
+                &query,
+                &param_type_oids,
                 output,
                 in_flight_prepares,
                 true,
