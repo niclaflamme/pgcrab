@@ -1,7 +1,7 @@
 use memchr::memchr;
 use std::{fmt, str};
 
-use crate::wire::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+use crate::wire::utils::{TaggedFrameError, parse_tagged_frame, peek_tagged_frame};
 
 // -----------------------------------------------------------------------------
 // ----- ExecuteFrameObserver --------------------------------------------------
@@ -36,8 +36,8 @@ impl<'a> ExecuteFrameObserver<'a> {
         };
         let mut pos = 5;
         // portal
-        let rel = memchr(0, &frame[pos..meta.total_len])
-            .ok_or(NewExecuteObserverError::UnexpectedEof)?;
+        let rel =
+            memchr(0, &frame[pos..meta.total_len]).ok_or(NewExecuteObserverError::UnexpectedEof)?;
         let portal =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewExecuteObserverError::InvalidUtf8)?;
         pos += rel + 1;

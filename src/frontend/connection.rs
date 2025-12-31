@@ -3,17 +3,17 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::select;
 
+use crate::ErrorResponse;
 use crate::frontend::buffers::FrontendBuffers;
 use crate::frontend::context::FrontendContext;
 use crate::frontend::handlers;
+use crate::frontend::proxy_responses as responses;
 use crate::frontend::transport::FrontendTransport;
 use crate::gateway::GatewayPools;
-use crate::frontend::proxy_responses as responses;
-use crate::shared_types::ReadyStatus;
 use crate::shared_types::AuthStage;
-use crate::wire::utils::peek_backend;
-use crate::ErrorResponse;
+use crate::shared_types::ReadyStatus;
 use crate::tls;
+use crate::wire::utils::peek_backend;
 
 // -----------------------------------------------------------------------------
 // ----- FrontendConnection ----------------------------------------------------
@@ -224,13 +224,14 @@ impl FrontendConnection {
             return Ok(true);
         }
 
-        let (pending_parses, pending_syncs, virtual_portals, gateway_session) = {
+        let (pending_parses, pending_syncs, virtual_portals, gateway_session, current_pool) = {
             let context = &mut self.context;
             (
                 &mut context.pending_parses,
                 &mut context.pending_syncs,
                 &mut context.virtual_portals,
                 &mut context.gateway_session,
+                &mut context.current_pool,
             )
         };
 
@@ -289,6 +290,7 @@ impl FrontendConnection {
 
         if release_session {
             *gateway_session = None;
+            *current_pool = None;
             pending_parses.clear();
             *pending_syncs = 0;
             virtual_portals.clear();
@@ -306,6 +308,7 @@ impl FrontendConnection {
         self.buffers
             .queue_response(&responses::ready_with_status(ReadyStatus::Idle));
         self.context.gateway_session = None;
+        self.context.current_pool = None;
         self.context.pending_parses.clear();
         self.context.pending_syncs = 0;
         self.context.virtual_portals.clear();

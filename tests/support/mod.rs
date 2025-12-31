@@ -1,8 +1,8 @@
 use serde::Deserialize;
 use std::{env, fs, net::TcpListener, path::PathBuf, process::Command, time::Duration};
 use tokio::sync::OnceCell;
-use tokio_postgres::NoTls;
 use tokio::time::sleep;
+use tokio_postgres::NoTls;
 
 static SHARDS_OK: OnceCell<()> = OnceCell::const_new();
 

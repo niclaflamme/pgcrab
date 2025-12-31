@@ -1,6 +1,7 @@
 use bytes::{BufMut, BytesMut};
 use memchr::memchr;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::debug;
 
 use crate::ErrorResponse;
@@ -11,9 +12,9 @@ use crate::frontend::proxy_responses as responses;
 use crate::gateway::GatewayPools;
 use crate::gateway::GatewaySession;
 use crate::parser;
-use crate::shared_types::StatementSignature;
 use crate::shared_types::AuthStage;
 use crate::shared_types::ReadyStatus;
+use crate::shared_types::StatementSignature;
 use crate::wire::observers::bind::BindFrameObserver;
 use crate::wire::observers::close::{CloseFrameObserver, CloseTarget};
 use crate::wire::observers::describe::{DescribeFrameObserver, DescribeTarget};
@@ -32,11 +33,12 @@ pub(crate) async fn handle_ready(
     sequence: BytesMut,
     pools: &GatewayPools,
 ) {
-    if context.is_admin && try_handle_admin_sequence(buffers, &sequence) {
+    if context.is_admin && try_handle_admin_sequence(context, buffers, &sequence, pools).await {
         return;
     }
 
     if context.gateway_session.is_none() {
+        context.current_pool = None;
         let Some(pool) = pools.random_pool() else {
             let err = ErrorResponse::internal_error("no backend shards available");
             buffers.queue_response(&err.to_bytes());
@@ -47,6 +49,7 @@ pub(crate) async fn handle_ready(
         match GatewaySession::from_pool(&pool).await {
             Ok(session) => {
                 context.gateway_session = Some(session);
+                context.current_pool = Some(pool.name().to_string());
             }
             Err(err) => {
                 let error = ErrorResponse::internal_error(err);
@@ -61,13 +64,14 @@ pub(crate) async fn handle_ready(
         return;
     };
 
-    let sequence = prepare_sequence(context, &mut session, sequence);
+    let sequence = prepare_sequence(context, &mut session, buffers, sequence);
 
     if let Err(err) = session.backend().send(&sequence).await {
         let error = ErrorResponse::internal_error(format!("backend write failed: {err}"));
         buffers.queue_response(&error.to_bytes());
         buffers.queue_response(&responses::ready_with_status(ReadyStatus::Idle));
         context.gateway_session = None;
+        context.current_pool = None;
         context.pending_parses.clear();
         context.pending_syncs = 0;
         context.virtual_portals.clear();
@@ -77,7 +81,12 @@ pub(crate) async fn handle_ready(
     context.gateway_session = Some(session);
 }
 
-fn try_handle_admin_sequence(buffers: &mut FrontendBuffers, sequence: &[u8]) -> bool {
+async fn try_handle_admin_sequence(
+    context: &FrontendContext,
+    buffers: &mut FrontendBuffers,
+    sequence: &[u8],
+    pools: &GatewayPools,
+) -> bool {
     let Some(peek) = peek_frontend(AuthStage::Ready, sequence) else {
         return false;
     };
@@ -98,37 +107,41 @@ fn try_handle_admin_sequence(buffers: &mut FrontendBuffers, sequence: &[u8]) -> 
         return false;
     };
 
-    for response in admin::command_responses(command) {
+    for response in admin::command_responses(command, context, pools).await {
         buffers.queue_response(&response);
     }
+
     buffers.queue_response(&responses::ready_with_status(ReadyStatus::Idle));
+
     true
 }
 
 fn prepare_sequence(
     context: &mut FrontendContext,
     session: &mut GatewaySession,
+    buffers: &mut FrontendBuffers,
     sequence: BytesMut,
 ) -> BytesMut {
     let mut output = BytesMut::with_capacity(sequence.len());
-    let mut in_flight_prepares: HashMap<StatementSignature, String> = HashMap::new();
+    let mut in_flight_prepares = std::mem::take(&mut context.in_flight_prepares);
+    in_flight_prepares.clear();
 
     let mut cursor = 0;
     while cursor < sequence.len() {
         let Some(peek) = peek_frontend(AuthStage::Ready, &sequence[cursor..]) else {
             output.extend_from_slice(&sequence[cursor..]);
-            return output;
+            break;
         };
 
         if peek.len == 0 {
             output.extend_from_slice(&sequence[cursor..]);
-            return output;
+            break;
         }
 
         let end = cursor.saturating_add(peek.len);
         if end > sequence.len() {
             output.extend_from_slice(&sequence[cursor..]);
-            return output;
+            break;
         }
 
         let frame = &sequence[cursor..end];
@@ -142,6 +155,7 @@ fn prepare_sequence(
                 handle_parse_frame(
                     context,
                     session,
+                    buffers,
                     frame,
                     &mut output,
                     &mut in_flight_prepares,
@@ -183,6 +197,7 @@ fn prepare_sequence(
         cursor = end;
     }
 
+    context.in_flight_prepares = in_flight_prepares;
     output
 }
 
@@ -203,6 +218,7 @@ fn handle_query_frame(context: &mut FrontendContext, session: &mut GatewaySessio
 fn handle_parse_frame(
     context: &mut FrontendContext,
     session: &mut GatewaySession,
+    buffers: &mut FrontendBuffers,
     frame: &[u8],
     output: &mut BytesMut,
     in_flight_prepares: &mut HashMap<StatementSignature, String>,
@@ -230,8 +246,17 @@ fn handle_parse_frame(
     }
     let signature = StatementSignature::new(observer.query(), &param_type_oids);
 
+    if let Some(existing) = context.virtual_statements.get(statement) {
+        if existing.signature == signature && !existing.closed {
+            buffers.queue_response(&responses::parse_complete());
+            return;
+        }
+    }
+
     let generation = match context.virtual_statements.get(statement) {
-        Some(existing) if existing.signature == signature && !existing.closed => existing.generation,
+        Some(existing) if existing.signature == signature && !existing.closed => {
+            existing.generation
+        }
         Some(existing) => existing.generation.saturating_add(1),
         None => 1,
     };
@@ -245,11 +270,14 @@ fn handle_parse_frame(
         }
     }
 
+    let query = Arc::<str>::from(observer.query());
+    let param_type_oids = Arc::<[i32]>::from(param_type_oids);
+
     context.virtual_statements.insert(
         statement.to_string(),
         VirtualStatement {
             generation,
-            query: observer.query().to_string(),
+            query: query.clone(),
             param_type_oids: param_type_oids.clone(),
             signature,
             closed: false,
@@ -257,8 +285,12 @@ fn handle_parse_frame(
     );
 
     let backend_statement_name = session.backend().allocate_statement_name();
-    let injected = build_parse_frame(&backend_statement_name, observer.query(), &param_type_oids);
-    output.extend_from_slice(&injected);
+    build_parse_frame_into(
+        output,
+        &backend_statement_name,
+        query.as_ref(),
+        param_type_oids.as_ref(),
+    );
     context.pending_parses.push_back(PendingParse {
         signature: Some(signature),
         backend_statement_name: Some(backend_statement_name.clone()),
@@ -275,8 +307,8 @@ fn ensure_prepared(
     context: &mut FrontendContext,
     session: &mut GatewaySession,
     signature: StatementSignature,
-    query: &str,
-    param_type_oids: &[i32],
+    query: &Arc<str>,
+    param_type_oids: &Arc<[i32]>,
     output: &mut BytesMut,
     in_flight_prepares: &mut HashMap<StatementSignature, String>,
     suppress_response: bool,
@@ -294,8 +326,12 @@ fn ensure_prepared(
     }
 
     let backend_statement_name = session.backend().allocate_statement_name();
-    let injected = build_parse_frame(&backend_statement_name, query, param_type_oids);
-    output.extend_from_slice(&injected);
+    build_parse_frame_into(
+        output,
+        &backend_statement_name,
+        query.as_ref(),
+        param_type_oids.as_ref(),
+    );
     context.pending_parses.push_back(PendingParse {
         signature: Some(signature),
         backend_statement_name: Some(backend_statement_name.clone()),
@@ -339,9 +375,8 @@ fn handle_bind_frame(
     }
 
     let signature = virtual_statement.signature;
-    let query = virtual_statement.query.clone();
-    let param_type_oids = virtual_statement.param_type_oids.clone();
-
+    let query = Arc::clone(&virtual_statement.query);
+    let param_type_oids = Arc::clone(&virtual_statement.param_type_oids);
     let prepared = ensure_prepared(
         context,
         session,
@@ -354,12 +389,15 @@ fn handle_bind_frame(
     );
 
     let backend_portal_name = session.backend().allocate_portal_name();
-    let Some(rewritten) =
-        rewrite_bind_frame(frame, &backend_portal_name, &prepared.backend_statement_name)
-    else {
+    if !rewrite_bind_frame_into(
+        output,
+        frame,
+        &backend_portal_name,
+        &prepared.backend_statement_name,
+    ) {
         output.extend_from_slice(frame);
         return;
-    };
+    }
 
     context.virtual_portals.insert(
         portal.to_string(),
@@ -367,8 +405,6 @@ fn handle_bind_frame(
             backend_portal_name: backend_portal_name.clone(),
         },
     );
-
-    output.extend_from_slice(&rewritten);
 }
 
 fn handle_describe_frame(
@@ -391,21 +427,26 @@ fn handle_describe_frame(
         DescribeTarget::Statement => {
             let name = observer.name();
             let Some(virtual_statement) = context.virtual_statements.get(name) else {
-                debug!(statement = name, "Describe references unknown prepared statement");
+                debug!(
+                    statement = name,
+                    "Describe references unknown prepared statement"
+                );
                 output.extend_from_slice(frame);
                 return;
             };
 
             if virtual_statement.closed {
-                debug!(statement = name, "Describe references closed prepared statement");
+                debug!(
+                    statement = name,
+                    "Describe references closed prepared statement"
+                );
                 output.extend_from_slice(frame);
                 return;
             }
 
             let signature = virtual_statement.signature;
-            let query = virtual_statement.query.clone();
-            let param_type_oids = virtual_statement.param_type_oids.clone();
-
+            let query = Arc::clone(&virtual_statement.query);
+            let param_type_oids = Arc::clone(&virtual_statement.param_type_oids);
             let prepared = ensure_prepared(
                 context,
                 session,
@@ -417,9 +458,11 @@ fn handle_describe_frame(
                 true,
             );
 
-            let rewritten =
-                build_describe_frame(DescribeTarget::Statement, &prepared.backend_statement_name);
-            output.extend_from_slice(&rewritten);
+            build_describe_frame_into(
+                output,
+                DescribeTarget::Statement,
+                &prepared.backend_statement_name,
+            );
         }
         DescribeTarget::Portal => {
             let name = observer.name();
@@ -429,9 +472,7 @@ fn handle_describe_frame(
                 return;
             };
 
-            let rewritten =
-                build_describe_frame(DescribeTarget::Portal, &binding.backend_portal_name);
-            output.extend_from_slice(&rewritten);
+            build_describe_frame_into(output, DescribeTarget::Portal, &binding.backend_portal_name);
         }
     }
 }
@@ -453,8 +494,7 @@ fn handle_execute_frame(context: &mut FrontendContext, frame: &[u8], output: &mu
         return;
     };
 
-    let rewritten = build_execute_frame(&binding.backend_portal_name, observer.max_rows());
-    output.extend_from_slice(&rewritten);
+    build_execute_frame_into(output, &binding.backend_portal_name, observer.max_rows());
 }
 
 fn handle_close_frame(
@@ -475,13 +515,10 @@ fn handle_close_frame(
     match observer.target() {
         CloseTarget::Statement => {
             let name = observer.name();
-            let signature = context
-                .virtual_statements
-                .get_mut(name)
-                .map(|statement| {
-                    statement.closed = true;
-                    statement.signature
-                });
+            let signature = context.virtual_statements.get_mut(name).map(|statement| {
+                statement.closed = true;
+                statement.signature
+            });
             if let Some(signature) = signature {
                 let backend_name = session
                     .backend()
@@ -489,8 +526,7 @@ fn handle_close_frame(
                     .map(str::to_string);
                 if let Some(backend_name) = backend_name {
                     session.backend().prepared_remove_name(&backend_name);
-                    let rewritten = build_close_frame(CloseTarget::Statement, &backend_name);
-                    output.extend_from_slice(&rewritten);
+                    build_close_frame_into(output, CloseTarget::Statement, &backend_name);
                     return;
                 }
             }
@@ -500,8 +536,7 @@ fn handle_close_frame(
             let name = observer.name();
             let removed = context.virtual_portals.remove(name);
             if let Some(binding) = removed {
-                let rewritten = build_close_frame(CloseTarget::Portal, &binding.backend_portal_name);
-                output.extend_from_slice(&rewritten);
+                build_close_frame_into(output, CloseTarget::Portal, &binding.backend_portal_name);
                 return;
             }
             output.extend_from_slice(frame);
@@ -509,91 +544,98 @@ fn handle_close_frame(
     }
 }
 
-fn build_parse_frame(statement: &str, query: &str, param_type_oids: &[i32]) -> BytesMut {
+fn build_parse_frame_into(
+    output: &mut BytesMut,
+    statement: &str,
+    query: &str,
+    param_type_oids: &[i32],
+) {
     let body_len = statement.len() + 1 + query.len() + 1 + 2 + 4 * param_type_oids.len();
-    let mut body = BytesMut::with_capacity(body_len);
-    body.extend_from_slice(statement.as_bytes());
-    body.put_u8(0);
-    body.extend_from_slice(query.as_bytes());
-    body.put_u8(0);
-    body.put_i16(param_type_oids.len() as i16);
+    output.reserve(1 + 4 + body_len);
+    output.put_u8(b'P');
+    output.put_u32((4 + body_len) as u32);
+    output.extend_from_slice(statement.as_bytes());
+    output.put_u8(0);
+    output.extend_from_slice(query.as_bytes());
+    output.put_u8(0);
+    output.put_i16(param_type_oids.len() as i16);
     for &oid in param_type_oids {
-        body.put_i32(oid);
+        output.put_i32(oid);
     }
-
-    let mut frame = BytesMut::with_capacity(1 + 4 + body.len());
-    frame.put_u8(b'P');
-    frame.put_u32((4 + body.len()) as u32);
-    frame.extend_from_slice(&body);
-    frame
 }
 
-fn rewrite_bind_frame(frame: &[u8], portal: &str, statement: &str) -> Option<BytesMut> {
+fn rewrite_bind_frame_into(
+    output: &mut BytesMut,
+    frame: &[u8],
+    portal: &str,
+    statement: &str,
+) -> bool {
     if frame.len() < 5 || frame[0] != b'B' {
-        return None;
+        return false;
     }
 
     let mut pos = 5;
-    let portal_rel = memchr(0, &frame[pos..])?;
+    let Some(portal_rel) = memchr(0, &frame[pos..]) else {
+        return false;
+    };
     pos += portal_rel + 1;
-    let statement_rel = memchr(0, &frame[pos..])?;
+    let Some(statement_rel) = memchr(0, &frame[pos..]) else {
+        return false;
+    };
     let tail_start = pos + statement_rel + 1;
     if tail_start > frame.len() {
-        return None;
+        return false;
     }
 
     let tail = &frame[tail_start..];
     let body_len = portal.len() + 1 + statement.len() + 1 + tail.len();
-    let mut out = BytesMut::with_capacity(1 + 4 + body_len);
-    out.put_u8(b'B');
-    out.put_u32((4 + body_len) as u32);
-    out.extend_from_slice(portal.as_bytes());
-    out.put_u8(0);
-    out.extend_from_slice(statement.as_bytes());
-    out.put_u8(0);
-    out.extend_from_slice(tail);
-    Some(out)
+    output.reserve(1 + 4 + body_len);
+    output.put_u8(b'B');
+    output.put_u32((4 + body_len) as u32);
+    output.extend_from_slice(portal.as_bytes());
+    output.put_u8(0);
+    output.extend_from_slice(statement.as_bytes());
+    output.put_u8(0);
+    output.extend_from_slice(tail);
+    true
 }
 
-fn build_describe_frame(target: DescribeTarget, name: &str) -> BytesMut {
+fn build_describe_frame_into(output: &mut BytesMut, target: DescribeTarget, name: &str) {
     let body_len = 1 + name.len() + 1;
-    let mut frame = BytesMut::with_capacity(1 + 4 + body_len);
-    frame.put_u8(b'D');
-    frame.put_u32((4 + body_len) as u32);
+    output.reserve(1 + 4 + body_len);
+    output.put_u8(b'D');
+    output.put_u32((4 + body_len) as u32);
     let target_byte = match target {
         DescribeTarget::Portal => b'P',
         DescribeTarget::Statement => b'S',
     };
-    frame.put_u8(target_byte);
-    frame.extend_from_slice(name.as_bytes());
-    frame.put_u8(0);
-    frame
+    output.put_u8(target_byte);
+    output.extend_from_slice(name.as_bytes());
+    output.put_u8(0);
 }
 
-fn build_execute_frame(portal: &str, max_rows: i32) -> BytesMut {
+fn build_execute_frame_into(output: &mut BytesMut, portal: &str, max_rows: i32) {
     let body_len = portal.len() + 1 + 4;
-    let mut frame = BytesMut::with_capacity(1 + 4 + body_len);
-    frame.put_u8(b'E');
-    frame.put_u32((4 + body_len) as u32);
-    frame.extend_from_slice(portal.as_bytes());
-    frame.put_u8(0);
-    frame.put_i32(max_rows);
-    frame
+    output.reserve(1 + 4 + body_len);
+    output.put_u8(b'E');
+    output.put_u32((4 + body_len) as u32);
+    output.extend_from_slice(portal.as_bytes());
+    output.put_u8(0);
+    output.put_i32(max_rows);
 }
 
-fn build_close_frame(target: CloseTarget, name: &str) -> BytesMut {
+fn build_close_frame_into(output: &mut BytesMut, target: CloseTarget, name: &str) {
     let body_len = 1 + name.len() + 1;
-    let mut frame = BytesMut::with_capacity(1 + 4 + body_len);
-    frame.put_u8(b'C');
-    frame.put_u32((4 + body_len) as u32);
+    output.reserve(1 + 4 + body_len);
+    output.put_u8(b'C');
+    output.put_u32((4 + body_len) as u32);
     let target_byte = match target {
         CloseTarget::Portal => b'P',
         CloseTarget::Statement => b'S',
     };
-    frame.put_u8(target_byte);
-    frame.extend_from_slice(name.as_bytes());
-    frame.put_u8(0);
-    frame
+    output.put_u8(target_byte);
+    output.extend_from_slice(name.as_bytes());
+    output.put_u8(0);
 }
 
 fn parse_and_log(query: &str, message_type: &'static str) {
@@ -609,10 +651,9 @@ fn is_reset_query(query: &str) -> bool {
         return false;
     }
 
-    match trimmed.to_ascii_uppercase().as_str() {
-        "DISCARD ALL" | "DEALLOCATE ALL" | "RESET ALL" => true,
-        _ => false,
-    }
+    trimmed.eq_ignore_ascii_case("DISCARD ALL")
+        || trimmed.eq_ignore_ascii_case("DEALLOCATE ALL")
+        || trimmed.eq_ignore_ascii_case("RESET ALL")
 }
 
 // -----------------------------------------------------------------------------

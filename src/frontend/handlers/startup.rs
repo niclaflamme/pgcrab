@@ -55,10 +55,9 @@ pub(crate) fn handle_startup(
             let startup_frame = match StartupFrameObserver::new(&message) {
                 Ok(frame) => frame,
                 Err(NewStartupObserverError::UnexpectedVersion(version)) => {
-                    let err = ErrorResponse::protocol_violation(
-                        "unsupported startup protocol version",
-                    )
-                    .with_detail(format!("version: {}", version));
+                    let err =
+                        ErrorResponse::protocol_violation("unsupported startup protocol version")
+                            .with_detail(format!("version: {}", version));
                     buffers.queue_response(&err.to_bytes());
                     context.request_close();
                     return;

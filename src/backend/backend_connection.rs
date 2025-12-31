@@ -168,8 +168,7 @@ impl BackendConnection {
                         if frame.len() < 9 {
                             return Err("backend auth response too short".to_string());
                         }
-                        let code =
-                            i32::from_be_bytes([frame[5], frame[6], frame[7], frame[8]]);
+                        let code = i32::from_be_bytes([frame[5], frame[6], frame[7], frame[8]]);
                         match code {
                             0 => {}
                             3 => {
@@ -177,10 +176,8 @@ impl BackendConnection {
                                     return Err("backend requested password twice".to_string());
                                 }
                                 if password.is_empty() {
-                                    return Err(
-                                        "backend requested password but none configured"
-                                            .to_string(),
-                                    );
+                                    return Err("backend requested password but none configured"
+                                        .to_string());
                                 }
                                 let password_message = build_password_message(password);
                                 self.send(&password_message)
@@ -189,9 +186,7 @@ impl BackendConnection {
                                 requested_password = true;
                             }
                             _ => {
-                                return Err(format!(
-                                    "unsupported backend auth method: {code}"
-                                ));
+                                return Err(format!("unsupported backend auth method: {code}"));
                             }
                         }
                     }

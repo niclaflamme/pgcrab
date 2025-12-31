@@ -1,7 +1,7 @@
 use memchr::memchr;
 use std::{fmt, str};
 
-use crate::wire::utils::{parse_tagged_frame, peek_tagged_frame, TaggedFrameError};
+use crate::wire::utils::{TaggedFrameError, parse_tagged_frame, peek_tagged_frame};
 
 // -----------------------------------------------------------------------------
 // ----- QueryFrameObserver ----------------------------------------------------
@@ -37,8 +37,8 @@ impl<'a> QueryFrameObserver<'a> {
         let mut pos = 5;
 
         // query
-        let rel = memchr(0, &frame[pos..meta.total_len])
-            .ok_or(NewQueryObserverError::UnexpectedEof)?;
+        let rel =
+            memchr(0, &frame[pos..meta.total_len]).ok_or(NewQueryObserverError::UnexpectedEof)?;
         let query =
             str::from_utf8(&frame[pos..pos + rel]).map_err(NewQueryObserverError::InvalidUtf8)?;
         pos += rel + 1;

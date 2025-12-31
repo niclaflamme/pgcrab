@@ -1,5 +1,6 @@
 use secrecy::ExposeSecret;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use crate::config::users::UsersConfig;
 use crate::gateway::GatewaySession;
@@ -18,8 +19,8 @@ pub(crate) struct PendingParse {
 #[derive(Debug, Clone)]
 pub(crate) struct VirtualStatement {
     pub(crate) generation: u64,
-    pub(crate) query: String,
-    pub(crate) param_type_oids: Vec<i32>,
+    pub(crate) query: Arc<str>,
+    pub(crate) param_type_oids: Arc<[i32]>,
     pub(crate) signature: StatementSignature,
     pub(crate) closed: bool,
 }
@@ -35,10 +36,12 @@ pub(crate) struct FrontendContext {
     pub(crate) username: Option<String>,
     pub(crate) backend_identity: BackendIdentity,
     pub(crate) gateway_session: Option<GatewaySession>,
+    pub(crate) current_pool: Option<String>,
     pub(crate) stage: AuthStage,
     pub(crate) is_admin: bool,
     pub(crate) virtual_statements: HashMap<String, VirtualStatement>,
     pub(crate) virtual_portals: HashMap<String, PortalBinding>,
+    pub(crate) in_flight_prepares: HashMap<StatementSignature, String>,
     pub(crate) pending_parses: VecDeque<PendingParse>,
     pub(crate) pending_syncs: usize,
     close_after_flush: bool,
@@ -52,10 +55,12 @@ impl FrontendContext {
             username: None,
             backend_identity: BackendIdentity::random(),
             gateway_session: None,
+            current_pool: None,
             stage: AuthStage::Startup,
             is_admin: false,
             virtual_statements: HashMap::new(),
             virtual_portals: HashMap::new(),
+            in_flight_prepares: HashMap::new(),
             pending_parses: VecDeque::new(),
             pending_syncs: 0,
             close_after_flush: false,
