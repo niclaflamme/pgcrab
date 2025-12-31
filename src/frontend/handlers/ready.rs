@@ -61,7 +61,7 @@ pub(crate) async fn handle_ready(
         return;
     };
 
-    let sequence = prepare_sequence(context, &mut session, sequence);
+    let sequence = prepare_sequence(context, &mut session, buffers, sequence);
 
     if let Err(err) = session.backend().send(&sequence).await {
         let error = ErrorResponse::internal_error(format!("backend write failed: {err}"));
@@ -108,6 +108,7 @@ fn try_handle_admin_sequence(buffers: &mut FrontendBuffers, sequence: &[u8]) -> 
 fn prepare_sequence(
     context: &mut FrontendContext,
     session: &mut GatewaySession,
+    buffers: &mut FrontendBuffers,
     sequence: BytesMut,
 ) -> BytesMut {
     let mut output = BytesMut::with_capacity(sequence.len());
@@ -142,6 +143,7 @@ fn prepare_sequence(
                 handle_parse_frame(
                     context,
                     session,
+                    buffers,
                     frame,
                     &mut output,
                     &mut in_flight_prepares,
@@ -203,6 +205,7 @@ fn handle_query_frame(context: &mut FrontendContext, session: &mut GatewaySessio
 fn handle_parse_frame(
     context: &mut FrontendContext,
     session: &mut GatewaySession,
+    buffers: &mut FrontendBuffers,
     frame: &[u8],
     output: &mut BytesMut,
     in_flight_prepares: &mut HashMap<StatementSignature, String>,
@@ -229,6 +232,13 @@ fn handle_parse_frame(
         param_type_oids.push(observer.param_type_oid(idx));
     }
     let signature = StatementSignature::new(observer.query(), &param_type_oids);
+
+    if let Some(existing) = context.virtual_statements.get(statement) {
+        if existing.signature == signature && !existing.closed {
+            buffers.queue_response(&responses::parse_complete());
+            return;
+        }
+    }
 
     let generation = match context.virtual_statements.get(statement) {
         Some(existing) if existing.signature == signature && !existing.closed => existing.generation,

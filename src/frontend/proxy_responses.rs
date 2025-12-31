@@ -58,6 +58,13 @@ pub(crate) fn ready_with_status(status: ReadyStatus) -> Bytes {
     b.freeze()
 }
 
+pub(crate) fn parse_complete() -> Bytes {
+    let mut b = BytesMut::with_capacity(1 + 4);
+    b.put_u8(b'1');
+    b.put_u32(4);
+    b.freeze()
+}
+
 pub(crate) fn backend_key_data(identity: BackendIdentity) -> Bytes {
     let mut b = BytesMut::with_capacity(1 + 4 + 8);
     b.put_u8(b'K');
